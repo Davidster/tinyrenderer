@@ -263,16 +263,31 @@ pub fn flip_vertically(img: &Array3<f64>) -> Array3<f64> {
     out
 }
 
+pub fn invert(img: &Array3<f64>) -> Array3<f64> {
+    let img_shape = img.shape();
+    let mut out = img.clone();
+    for x in 0..img_shape[0] {
+        for y in 0..img_shape[1] {
+            for channel in 0..img_shape[2] {
+                out[[x, y, channel]] = 255.0 - img[[x, y, channel]];
+            }
+        }
+    }
+    out
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Point {
     pub x: i64,
     pub y: i64,
+    pub z: i64,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct Pointf {
     pub x: f64,
     pub y: f64,
+    pub z: f64,
 }
 
 pub struct MyRgbaImage {
@@ -314,6 +329,17 @@ impl From<(i64, i64)> for Point {
         Point {
             x: coords.0,
             y: coords.1,
+            z: 0,
+        }
+    }
+}
+
+impl From<(i64, i64, i64)> for Point {
+    fn from(coords: (i64, i64, i64)) -> Point {
+        Point {
+            x: coords.0,
+            y: coords.1,
+            z: coords.2,
         }
     }
 }
@@ -323,6 +349,17 @@ impl From<(f64, f64)> for Pointf {
         Pointf {
             x: coords.0,
             y: coords.1,
+            z: 0.0,
+        }
+    }
+}
+
+impl From<(f64, f64, f64)> for Pointf {
+    fn from(coords: (f64, f64, f64)) -> Pointf {
+        Pointf {
+            x: coords.0,
+            y: coords.1,
+            z: coords.2,
         }
     }
 }
@@ -332,6 +369,17 @@ impl From<(i64, i64)> for Pointf {
         Pointf {
             x: coords.0 as f64,
             y: coords.1 as f64,
+            z: 0.0,
+        }
+    }
+}
+
+impl From<(i64, i64, i64)> for Pointf {
+    fn from(coords: (i64, i64, i64)) -> Pointf {
+        Pointf {
+            x: coords.0 as f64,
+            y: coords.1 as f64,
+            z: coords.2 as f64,
         }
     }
 }
@@ -341,6 +389,7 @@ impl From<Point> for Pointf {
         Pointf {
             x: point.x as f64,
             y: point.y as f64,
+            z: point.z as f64,
         }
     }
 }

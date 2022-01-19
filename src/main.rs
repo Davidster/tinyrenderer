@@ -1,16 +1,24 @@
 mod helpers;
-mod segment_2d;
+mod segment_3d;
 
 use anyhow::Result;
-use segment_2d::Segment2D;
+use nalgebra::Vector3;
+use segment_3d::Segment3D;
 use show_image::WindowOptions;
 use std::{cmp::Ordering, fs::read_to_string, fs::File, io::BufReader, thread, time::Duration};
 
 use helpers::{
-    flip_vertically, ndarray_to_image_rgba, wait_for_windows_to_close, write_nd_rgba_img_to_file,
+    flip_vertically, invert, ndarray_to_image_gray, ndarray_to_image_rgba,
+    wait_for_windows_to_close, write_nd_rgba_img_to_file, ImgConversionType, MyGrayImage,
     MyRgbaImage, NDGrayImage, NDRgbaImage, Point, Pointf,
 };
 use ndarray::Array3;
+
+const black: [f64; 4] = [0.0, 0.0, 0.0, 255.0];
+const red: [f64; 4] = [255.0, 0.0, 0.0, 255.0];
+const green: [f64; 4] = [0.0, 255.0, 0.0, 255.0];
+const blue: [f64; 4] = [0.0, 0.0, 255.0, 255.0];
+const white: [f64; 4] = [255.0, 255.0, 255.0, 255.0];
 
 fn draw_line(
     img: &mut MyRgbaImage,
@@ -20,7 +28,7 @@ fn draw_line(
 ) -> Result<()> {
     let mut points = [start_point, end_point].to_vec();
     points.sort_by(|a, b| b.x.partial_cmp(&a.x).unwrap_or(Ordering::Equal));
-    let segment = Segment2D::new(points[0], points[1]);
+    let segment = Segment3D::new(points[0], points[1]);
     // println!("Created segment: {:?}", segment);
     segment.get_point_iterator(None)?.for_each(|point| {
         img.set(
@@ -34,6 +42,7 @@ fn draw_line(
 
 fn draw_triangle(
     img: &mut MyRgbaImage,
+    z_buffer: &mut MyGrayImage,
     p1: Pointf,
     p2: Pointf,
     p3: Pointf,
@@ -43,12 +52,12 @@ fn draw_triangle(
     let mut points = [p1, p2, p3].to_vec();
     points.sort_by(|a, b| b.y.partial_cmp(&a.y).unwrap_or(Ordering::Equal));
     // long means long in the y direction
-    let long_side_segment = Segment2D::new(points[0], points[2]);
+    let long_side_segment = Segment3D::new(points[0], points[2]);
     let long_side_split_point =
         long_side_segment.get_point((points[1].y - points[0].y) / (points[2].y - points[0].y))?;
 
     let mut fill_half_triangle =
-        |segment_a: Segment2D, segment_b: Segment2D| -> anyhow::Result<()> {
+        |segment_a: Segment3D, segment_b: Segment3D| -> anyhow::Result<()> {
             let resolution = ((segment_a.p2.x - segment_a.p1.x)
                 .abs()
                 .max((segment_a.p2.y - segment_a.p1.y).abs())
@@ -60,15 +69,18 @@ fn draw_triangle(
                 .get_point_iterator(resolution)?
                 .zip(segment_b.get_point_iterator(resolution)?)
                 .map(|(p1, p2)| -> anyhow::Result<()> {
-                    let horizontal_segment = Segment2D::new(p1, p2);
+                    let horizontal_segment = Segment3D::new(p1, p2);
                     horizontal_segment
                         .get_point_iterator(None)?
                         .for_each(|point| {
-                            img.set(
-                                (point.x.round()) as usize,
-                                (point.y.round()) as usize,
-                                color,
-                            );
+                            let x = (point.x.round()) as usize;
+                            let y = (point.y.round()) as usize;
+                            let dist = -point.z + 1.0;
+                            let current_z = z_buffer.get(x, y)[0];
+                            if current_z == f64::NEG_INFINITY || current_z > dist {
+                                z_buffer.set(x, y, [dist]);
+                                img.set(x, y, color);
+                            }
                         });
                     Ok(())
                 })
@@ -86,12 +98,12 @@ fn draw_triangle(
         };
 
     fill_half_triangle(
-        Segment2D::new(points[0], points[1]),
-        Segment2D::new(points[0], long_side_split_point),
+        Segment3D::new(points[0], points[1]),
+        Segment3D::new(points[0], long_side_split_point),
     )?;
     fill_half_triangle(
-        Segment2D::new(points[2], points[1]),
-        Segment2D::new(points[2], long_side_split_point),
+        Segment3D::new(points[2], points[1]),
+        Segment3D::new(points[2], long_side_split_point),
     )?;
 
     Ok(())
@@ -102,6 +114,38 @@ fn load_model(path: &str) -> Result<wavefront_obj::obj::Object> {
     Ok(objects.remove(0))
 }
 
+fn clear_screen(img: &mut MyRgbaImage, z_buffer: &mut MyGrayImage) {
+    let img_width = img.nd_img.shape()[0];
+    let img_height = img.nd_img.shape()[1];
+    // set all to black
+    for x in 0..img_width {
+        for y in 0..img_height {
+            img.set(x, y, black.clone());
+        }
+    }
+    // reset z-buffer
+    for x in 0..img_width {
+        for y in 0..img_height {
+            z_buffer.set(x, y, [f64::NEG_INFINITY]);
+        }
+    }
+}
+
+fn get_drawable_z_buffer(z_buffer: &NDGrayImage) -> NDGrayImage {
+    let width = z_buffer.shape()[0];
+    let height = z_buffer.shape()[1];
+    let mut drawable_z_buffer: NDGrayImage = Array3::zeros((width, height, 1));
+    for x in 0..width {
+        for y in 0..height {
+            let val = z_buffer[[x, y, 0]].max(0.0);
+            if val > 0.0 {
+                drawable_z_buffer[[x, y, 0]] = 1.0 / val;
+            }
+        }
+    }
+    drawable_z_buffer
+}
+
 #[show_image::main]
 fn main() {
     let mut img = MyRgbaImage {
@@ -109,17 +153,12 @@ fn main() {
     };
     let img_width = img.nd_img.shape()[0];
     let img_height = img.nd_img.shape()[1];
-    let black = [0.0, 0.0, 0.0, 255.0];
-    let red = [255.0, 0.0, 0.0, 255.0];
-    let green = [0.0, 255.0, 0.0, 255.0];
-    let blue = [0.0, 0.0, 255.0, 255.0];
-    let white = [255.0, 255.0, 255.0, 255.0];
-    // set all to black
-    for x in 0..img_width {
-        for y in 0..img_height {
-            img.set(x, y, black.clone());
-        }
-    }
+    let mut z_buffer = MyGrayImage {
+        nd_img: Array3::zeros((img_width, img_height, 1)),
+    };
+
+    clear_screen(&mut img, &mut z_buffer);
+
     // img.set(52, 41, [255.0, 0.0, 0.0, 255.0]);
     // write_nd_rgba_img_to_file("./1.png", &flip_vertically(&img.nd_img)).unwrap();
     // draw_line_2(&mut img, Point::from((20, 13)), Point::from((40, 80)), red);
@@ -132,8 +171,7 @@ fn main() {
     // )
     // .unwrap();
     // write_nd_rgba_img_to_file("./3.png", &flip_vertically(&img.nd_img)).unwrap();
-    let african_head_model =
-        load_model("/home/david/Programming/tinyrenderer/src/african_head.obj").unwrap();
+    let african_head_model = load_model("./src/african_head.obj").unwrap();
 
     let window = show_image::create_window(
         "img",
@@ -211,12 +249,69 @@ fn main() {
     // _draw_triangle(&african_head_model.geometry[0].shapes[56]);
     // _draw_triangle(&african_head_model.geometry[0].shapes[57]);
 
+    // loop {
+    //     for x in 0..img_width {
+    //         for y in 0..img_height {
+    //             img.set(x, y, black.clone());
+    //         }
+    //     }
+    //     let mut _draw_triangle = |shape: &wavefront_obj::obj::Shape| {
+    //         let prim = shape.primitive;
+    //         if let wavefront_obj::obj::Primitive::Triangle(i1, i2, i3) = prim {
+    //             // println!("Drawing triangle: {:?}", prim);
+    //             let v1 = african_head_model.vertices[i1.0];
+    //             let v2 = african_head_model.vertices[i2.0];
+    //             let v3 = african_head_model.vertices[i3.0];
+    //             let transform_point = |(x, y): (f64, f64)| {
+    //                 (
+    //                     ((x + 1.0) * ((img_width - 1) as f64 / 2.0)) as i64,
+    //                     ((y + 1.0) * ((img_height - 1) as f64 / 2.0)) as i64,
+    //                 )
+    //             };
+    //             draw_triangle(
+    //                 &mut img,
+    //                 Pointf::from(transform_point((v1.x, v1.y))),
+    //                 Pointf::from(transform_point((v2.x, v2.y))),
+    //                 Pointf::from(transform_point((v3.x, v3.y))),
+    //                 colors[i % colors.len()],
+    //             )
+    //             .unwrap();
+
+    //             let mut draw = |v_1: wavefront_obj::obj::Vertex,
+    //                             v_2: wavefront_obj::obj::Vertex,
+    //                             color: [f64; 4]| {
+    //                 draw_line(
+    //                     &mut img,
+    //                     Pointf::from((
+    //                         ((v_1.x + 1.0) * ((img_width - 1) as f64 / 2.0)).round(),
+    //                         ((v_1.y + 1.0) * ((img_height - 1) as f64 / 2.0)).round(),
+    //                     )),
+    //                     Pointf::from((
+    //                         ((v_2.x + 1.0) * ((img_width - 1) as f64 / 2.0)).round(),
+    //                         ((v_2.y + 1.0) * ((img_height - 1) as f64 / 2.0)).round(),
+    //                     )),
+    //                     color,
+    //                 )
+    //                 .unwrap();
+    //             };
+    //             // draw(v1, v2, white);
+    //             // draw(v2, v3, white);
+    //             // draw(v3, v1, white);
+    //             i += 1;
+    //         }
+    //     };
+    //     african_head_model.geometry[0]
+    //         .shapes
+    //         .iter()
+    //         .for_each(_draw_triangle);
+    //     window
+    //         .set_image("img", ndarray_to_image_rgba(&flip_vertically(&img.nd_img)))
+    //         .expect("Failed to set image");
+    //     thread::sleep(Duration::from_millis(50));
+    // }
+
     loop {
-        for x in 0..img_width {
-            for y in 0..img_height {
-                img.set(x, y, black.clone());
-            }
-        }
+        clear_screen(&mut img, &mut z_buffer);
         let mut _draw_triangle = |shape: &wavefront_obj::obj::Shape| {
             let prim = shape.primitive;
             if let wavefront_obj::obj::Primitive::Triangle(i1, i2, i3) = prim {
@@ -224,42 +319,33 @@ fn main() {
                 let v1 = african_head_model.vertices[i1.0];
                 let v2 = african_head_model.vertices[i2.0];
                 let v3 = african_head_model.vertices[i3.0];
-                let transform_point = |(x, y): (f64, f64)| {
+                let transform_point = |(x, y, z): (f64, f64, f64)| {
                     (
-                        ((x + 1.0) * ((img_width - 1) as f64 / 2.0)) as i64,
-                        ((y + 1.0) * ((img_height - 1) as f64 / 2.0)) as i64,
+                        ((x + 1.0) * ((img_width - 1) as f64 / 2.0)),
+                        ((y + 1.0) * ((img_height - 1) as f64 / 2.0)),
+                        z,
                     )
                 };
+
+                let side_1 = Vector3::new(v2.x - v1.x, v2.y - v1.y, v2.z - v1.z).normalize();
+                let side_2 = Vector3::new(v3.x - v2.x, v3.y - v2.y, v3.z - v2.z).normalize();
+                let normal = side_1.cross(&side_2).normalize();
+                let to_light_vec = Vector3::new(0.1, 0.1, i as f64 * 0.000001).normalize();
+                let diffuse_proportion = normal.dot(&to_light_vec);
+
+                let light_intensity = 0.7;
+                let diffuse_component = (diffuse_proportion * light_intensity * 255.0).max(0.0);
+                let ambient_component = 30.0;
+                let overall_light = (ambient_component + diffuse_component).min(255.0);
                 draw_triangle(
                     &mut img,
-                    Pointf::from(transform_point((v1.x, v1.y))),
-                    Pointf::from(transform_point((v2.x, v2.y))),
-                    Pointf::from(transform_point((v3.x, v3.y))),
-                    colors[i % colors.len()],
+                    &mut z_buffer,
+                    Pointf::from(transform_point((v1.x, v1.y, v1.z))),
+                    Pointf::from(transform_point((v2.x, v2.y, v2.z))),
+                    Pointf::from(transform_point((v3.x, v3.y, v3.z))),
+                    [overall_light, overall_light, overall_light, 255.0],
                 )
                 .unwrap();
-
-                let mut draw = |v_1: wavefront_obj::obj::Vertex,
-                                v_2: wavefront_obj::obj::Vertex,
-                                color: [f64; 4]| {
-                    draw_line(
-                        &mut img,
-                        Pointf::from((
-                            ((v_1.x + 1.0) * ((img_width - 1) as f64 / 2.0)).round(),
-                            ((v_1.y + 1.0) * ((img_height - 1) as f64 / 2.0)).round(),
-                        )),
-                        Pointf::from((
-                            ((v_2.x + 1.0) * ((img_width - 1) as f64 / 2.0)).round(),
-                            ((v_2.y + 1.0) * ((img_height - 1) as f64 / 2.0)).round(),
-                        )),
-                        color,
-                    )
-                    .unwrap();
-                };
-
-                // draw(v1, v2, white);
-                // draw(v2, v3, white);
-                // draw(v3, v1, white);
                 i += 1;
             }
         };
@@ -270,6 +356,16 @@ fn main() {
         window
             .set_image("img", ndarray_to_image_rgba(&flip_vertically(&img.nd_img)))
             .expect("Failed to set image");
+
+        // window
+        //     .set_image(
+        //         "img",
+        //         ndarray_to_image_gray(
+        //             &flip_vertically(&get_drawable_z_buffer(&z_buffer.nd_img)),
+        //             ImgConversionType::NORMALIZE,
+        //         ),
+        //     )
+        //     .expect("Failed to set image");
         thread::sleep(Duration::from_millis(50));
     }
 

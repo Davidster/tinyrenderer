@@ -3,14 +3,14 @@ use super::helpers::*;
 use anyhow::anyhow;
 
 #[derive(Clone, Debug)]
-pub struct Segment2D {
+pub struct Segment3D {
     pub p1: Pointf,
     pub p2: Pointf,
 }
 
-impl Segment2D {
+impl Segment3D {
     pub fn new(p1: Pointf, p2: Pointf) -> Self {
-        Segment2D { p1, p2 }
+        Segment3D { p1, p2 }
     }
     pub fn get_point(&self, t: f64) -> anyhow::Result<Pointf> {
         if t < 0.0 || t > 1.0 {
@@ -21,9 +21,11 @@ impl Segment2D {
         }
         let d_x = self.p2.x - self.p1.x;
         let d_y = self.p2.y - self.p1.y;
+        let d_z = self.p2.z - self.p1.z;
         let result = Pointf {
             x: self.p1.x + t * d_x,
             y: self.p1.y + t * d_y,
+            z: self.p1.z + t * d_z,
         };
         // println!("get_point: t = {:?}, result = {:?}", t, result);
         Ok(result)
@@ -54,7 +56,7 @@ impl Segment2D {
 }
 
 pub struct SegmentRange {
-    segment: Segment2D,
+    segment: Segment3D,
     resolution: i64,
     i: i64,
 }
