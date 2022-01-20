@@ -89,7 +89,7 @@ pub fn load_gray_img_from_file(path: &str) -> Result<GrayImage> {
     Ok(img.into_luma8())
 }
 
-pub fn load_nd_rgb_img_from_file(path: &str) -> Result<NDRgbaImage> {
+pub fn load_nd_rgba_img_from_file(path: &str) -> Result<NDRgbaImage> {
     let img = load_rgba_img_from_file(path)?;
     Ok(image_to_ndarray_rgba(&img))
 }
@@ -215,9 +215,9 @@ pub fn ndarray_to_image_gray(img: &NDGrayImage, conversion_type: ImgConversionTy
 // TODO: if you give perfect pixels, this returns [NaN, NaN, NaN]
 pub fn sample_nd_img(img: &NDRgbaImage, x: f64, y: f64) -> [f64; 4] {
     let x1 = x.floor();
-    let x2 = x.ceil();
+    let x2 = x1 + 1.0;
     let y1 = y.floor();
-    let y2 = y.ceil();
+    let y2 = y1 + 1.0;
     let do_interpolation_for_channel = |channel: usize| {
         let corners = [
             img[[x1 as usize, y1 as usize, channel]],
@@ -276,6 +276,19 @@ pub fn invert(img: &Array3<f64>) -> Array3<f64> {
     out
 }
 
+// taken from https://en.wikipedia.org/wiki/Barycentric_coordinate_system#Edge_approach
+pub fn get_barycentric_coords_for_point_in_triangle(
+    triangle: (Pointf, Pointf, Pointf),
+    point: Pointf,
+) -> (f64, f64, f64) {
+    let (p1, p2, p3) = triangle;
+    let detT = (((p2.y - p3.y) * (p1.x - p3.x)) + ((p3.x - p2.x) * (p1.y - p3.y)));
+    let lambda_1 = (((p2.y - p3.y) * (point.x - p3.x)) + ((p3.x - p2.x) * (point.y - p3.y))) / detT;
+    let lambda_2 = (((p3.y - p1.y) * (point.x - p3.x)) + ((p1.x - p3.x) * (point.y - p3.y))) / detT;
+    let lambda_3 = 1.0 - lambda_1 - lambda_2;
+    (lambda_1, lambda_2, lambda_3)
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Point {
     pub x: i64,
@@ -288,6 +301,24 @@ pub struct Pointf {
     pub x: f64,
     pub y: f64,
     pub z: f64,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct TextureCoords {
+    pub u: f64,
+    pub v: f64,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct MyTrianglePoint {
+    pub position: Pointf,
+    pub color: MyTrianglePointColor,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum MyTrianglePointColor {
+    Colored([f64; 4]),
+    Textured(TextureCoords),
 }
 
 pub struct MyRgbaImage {

@@ -35,12 +35,14 @@ impl Segment3D {
         resolution_arg: impl Into<Option<i64>>,
     ) -> anyhow::Result<SegmentRange> {
         let resolution = resolution_arg.into().unwrap_or_else(|| {
-            ((self.p2.x - self.p1.x)
+            (((self.p2.x - self.p1.x)
                 .abs()
                 .max((self.p2.y - self.p1.y).abs())
                 .ceil() as i64)
-                .max(2)
+                + 1)
+            .max(2)
         });
+        // dbg!(resolution);
         if resolution < 2 {
             return Err(anyhow!(
                 "resolution must be > 1. Got resolution = {:?}",

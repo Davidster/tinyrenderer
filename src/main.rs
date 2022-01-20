@@ -7,11 +7,7 @@ use segment_3d::Segment3D;
 use show_image::WindowOptions;
 use std::{cmp::Ordering, fs::read_to_string, fs::File, io::BufReader, thread, time::Duration};
 
-use helpers::{
-    flip_vertically, invert, ndarray_to_image_gray, ndarray_to_image_rgba,
-    wait_for_windows_to_close, write_nd_rgba_img_to_file, ImgConversionType, MyGrayImage,
-    MyRgbaImage, NDGrayImage, NDRgbaImage, Point, Pointf,
-};
+use helpers::*;
 use ndarray::Array3;
 
 const black: [f64; 4] = [0.0, 0.0, 0.0, 255.0];
@@ -40,70 +36,136 @@ fn draw_line(
     Ok(())
 }
 
-fn draw_triangle(
+fn draw_triangle<'a>(
     img: &mut MyRgbaImage,
     z_buffer: &mut MyGrayImage,
-    p1: Pointf,
-    p2: Pointf,
-    p3: Pointf,
-    color: [f64; 4],
+    normal_vector: Vector3<f64>,
+    time: i64,
+    _texture_option: impl Into<Option<&'a MyRgbaImage>>,
+    p1: MyTrianglePoint,
+    p2: MyTrianglePoint,
+    p3: MyTrianglePoint,
 ) -> Result<()> {
+    let texture_option = _texture_option.into();
     // println!("drawing triangle: {:?}, {:?}, {:?}", p1, p2, p3);
     let mut points = [p1, p2, p3].to_vec();
-    points.sort_by(|a, b| b.y.partial_cmp(&a.y).unwrap_or(Ordering::Equal));
+    points.sort_by(|a, b| {
+        b.position
+            .y
+            .partial_cmp(&a.position.y)
+            .unwrap_or(Ordering::Equal)
+    });
     // long means long in the y direction
-    let long_side_segment = Segment3D::new(points[0], points[2]);
-    let long_side_split_point =
-        long_side_segment.get_point((points[1].y - points[0].y) / (points[2].y - points[0].y))?;
+    let long_side_segment = Segment3D::new(points[0].position, points[2].position);
+    let long_side_split_point = long_side_segment.get_point(
+        (points[1].position.y - points[0].position.y)
+            / (points[2].position.y - points[0].position.y),
+    )?;
 
-    let mut fill_half_triangle =
-        |segment_a: Segment3D, segment_b: Segment3D| -> anyhow::Result<()> {
-            let resolution = ((segment_a.p2.x - segment_a.p1.x)
-                .abs()
-                .max((segment_a.p2.y - segment_a.p1.y).abs())
-                .max((segment_b.p2.x - segment_a.p1.x).abs())
-                .max((segment_b.p2.y - segment_a.p1.y).abs())
-                .ceil() as i64)
-                .max(2);
-            let error_option = segment_a
-                .get_point_iterator(resolution)?
-                .zip(segment_b.get_point_iterator(resolution)?)
-                .map(|(p1, p2)| -> anyhow::Result<()> {
-                    let horizontal_segment = Segment3D::new(p1, p2);
-                    horizontal_segment
-                        .get_point_iterator(None)?
-                        .for_each(|point| {
-                            let x = (point.x.round()) as usize;
-                            let y = (point.y.round()) as usize;
-                            let dist = -point.z + 1.0;
-                            let current_z = z_buffer.get(x, y)[0];
-                            if current_z == f64::NEG_INFINITY || current_z > dist {
-                                z_buffer.set(x, y, [dist]);
+    let mut fill_half_triangle = |segment_a: Segment3D,
+                                  segment_b: Segment3D|
+     -> anyhow::Result<()> {
+        let resolution = ((segment_a.p2.x - segment_a.p1.x)
+            .abs()
+            .max((segment_a.p2.y - segment_a.p1.y).abs())
+            .max((segment_b.p2.x - segment_a.p1.x).abs())
+            .max((segment_b.p2.y - segment_a.p1.y).abs())
+            .ceil() as i64)
+            .max(2);
+        let error_option = segment_a
+            .get_point_iterator(resolution)?
+            .zip(segment_b.get_point_iterator(resolution)?)
+            .map(|(segment_a_point, segment_b_point)| -> anyhow::Result<()> {
+                let horizontal_segment = Segment3D::new(segment_a_point, segment_b_point);
+                horizontal_segment
+                    .get_point_iterator(None)?
+                    .for_each(|point| {
+                        let x = (point.x.round()) as usize;
+                        let y = (point.y.round()) as usize;
+                        let dist = -point.z + 1.0;
+                        let current_z = z_buffer.get(x, y)[0];
+                        if current_z == f64::NEG_INFINITY || current_z > dist {
+                            z_buffer.set(x, y, [dist]);
+                            let (l1, l2, l3) = get_barycentric_coords_for_point_in_triangle(
+                                (p1.position, p2.position, p3.position),
+                                point,
+                            );
+                            let color_option = match (p1.color, p2.color, p3.color) {
+                                (
+                                    MyTrianglePointColor::Colored(c1),
+                                    MyTrianglePointColor::Colored(c2),
+                                    MyTrianglePointColor::Colored(c3),
+                                ) => Some([
+                                    l1 * c1[0] + l2 * c2[0] + l3 * c3[0],
+                                    l1 * c1[1] + l2 * c2[1] + l3 * c3[1],
+                                    l1 * c1[2] + l2 * c2[2] + l3 * c3[2],
+                                    l1 * c1[3] + l2 * c2[3] + l3 * c3[3],
+                                ]),
+                                (
+                                    MyTrianglePointColor::Textured(uv1),
+                                    MyTrianglePointColor::Textured(uv2),
+                                    MyTrianglePointColor::Textured(uv3),
+                                ) => {
+                                    let texture = texture_option
+                                        .expect("Textured points were provided without a texture");
+                                    let u = l1 * uv1.u + l2 * uv2.u + l3 * uv3.u;
+                                    let v = l1 * uv1.v + l2 * uv2.v + l3 * uv3.v;
+                                    let texture_width = texture.nd_img.shape()[0];
+                                    let texture_height = texture.nd_img.shape()[1];
+                                    Some(sample_nd_img(
+                                        &texture.nd_img,
+                                        u * texture_width as f64,
+                                        v * texture_height as f64,
+                                    ))
+                                }
+                                _ => None,
+                            };
+                            if let Some(albedo) = color_option {
+                                // dbg!(color);
+                                let to_light_vec =
+                                    Vector3::new(0.1, 0.1, time as f64 * 0.000001).normalize();
+                                let diffuse_proportion = normal_vector.dot(&to_light_vec).max(0.0);
+
+                                let light_intensity = 0.7;
+                                let ambient_light = 15.0;
+                                let color = [
+                                    (ambient_light
+                                        + (diffuse_proportion * light_intensity * albedo[0]))
+                                        .min(255.0),
+                                    (ambient_light
+                                        + (diffuse_proportion * light_intensity * albedo[1]))
+                                        .min(255.0),
+                                    (ambient_light
+                                        + (diffuse_proportion * light_intensity * albedo[2]))
+                                        .min(255.0),
+                                    255.0,
+                                ];
                                 img.set(x, y, color);
                             }
-                        });
-                    Ok(())
-                })
-                .find_map(|result| -> Option<anyhow::Result<()>> {
-                    match result {
-                        Ok(_) => None,
-                        Err(err) => Some(Err(err)),
-                    }
-                });
+                        }
+                    });
+                Ok(())
+            })
+            .find_map(|result| -> Option<anyhow::Result<()>> {
+                match result {
+                    Ok(_) => None,
+                    Err(err) => Some(Err(err)),
+                }
+            });
 
-            if let Some(result) = error_option {
-                return result;
-            }
-            Ok(())
-        };
+        if let Some(result) = error_option {
+            return result;
+        }
+        Ok(())
+    };
 
     fill_half_triangle(
-        Segment3D::new(points[0], points[1]),
-        Segment3D::new(points[0], long_side_split_point),
+        Segment3D::new(points[0].position, points[1].position),
+        Segment3D::new(points[0].position, long_side_split_point),
     )?;
     fill_half_triangle(
-        Segment3D::new(points[2], points[1]),
-        Segment3D::new(points[2], long_side_split_point),
+        Segment3D::new(points[2].position, points[1].position),
+        Segment3D::new(points[2].position, long_side_split_point),
     )?;
 
     Ok(())
@@ -172,6 +234,11 @@ fn main() {
     // .unwrap();
     // write_nd_rgba_img_to_file("./3.png", &flip_vertically(&img.nd_img)).unwrap();
     let african_head_model = load_model("./src/african_head.obj").unwrap();
+    let _african_head_texture =
+        flip_vertically(&load_nd_rgba_img_from_file("./src/african_head_diffuse.png").unwrap());
+    let african_head_texture = MyRgbaImage {
+        nd_img: _african_head_texture,
+    };
 
     let window = show_image::create_window(
         "img",
@@ -310,6 +377,75 @@ fn main() {
     //     thread::sleep(Duration::from_millis(50));
     // }
 
+    // loop {
+    //     clear_screen(&mut img, &mut z_buffer);
+    //     let mut _draw_triangle = |shape: &wavefront_obj::obj::Shape| {
+    //         let prim = shape.primitive;
+    //         if let wavefront_obj::obj::Primitive::Triangle(i1, i2, i3) = prim {
+    //             // println!("Drawing triangle: {:?}", prim);
+    //             let v1 = african_head_model.vertices[i1.0];
+    //             let v2 = african_head_model.vertices[i2.0];
+    //             let v3 = african_head_model.vertices[i3.0];
+    //             let transform_point = |(x, y, z): (f64, f64, f64)| {
+    //                 (
+    //                     ((x + 1.0) * ((img_width - 1) as f64 / 2.0)),
+    //                     ((y + 1.0) * ((img_height - 1) as f64 / 2.0)),
+    //                     z,
+    //                 )
+    //             };
+
+    //             let side_1 = Vector3::new(v2.x - v1.x, v2.y - v1.y, v2.z - v1.z).normalize();
+    //             let side_2 = Vector3::new(v3.x - v2.x, v3.y - v2.y, v3.z - v2.z).normalize();
+    //             let normal = side_1.cross(&side_2).normalize();
+    //             let to_light_vec = Vector3::new(0.1, 0.1, i as f64 * 0.000001).normalize();
+    //             let diffuse_proportion = normal.dot(&to_light_vec);
+
+    //             let light_intensity = 0.7;
+    //             let diffuse_component = (diffuse_proportion * light_intensity * 255.0).max(0.0);
+    //             let ambient_component = 30.0;
+    //             let overall_light = (ambient_component + diffuse_component).min(255.0);
+    //             let color = [overall_light, overall_light, overall_light, 255.0];
+    //             let point_color = MyTrianglePointColor::Colored(color);
+    //             draw_triangle(
+    //                 &mut img,
+    //                 &mut z_buffer,
+    //                 MyTrianglePoint {
+    //                     position: Pointf::from(transform_point((v1.x, v1.y, v1.z))),
+    //                     color: point_color,
+    //                 },
+    //                 MyTrianglePoint {
+    //                     position: Pointf::from(transform_point((v2.x, v2.y, v2.z))),
+    //                     color: point_color,
+    //                 },
+    //                 MyTrianglePoint {
+    //                     position: Pointf::from(transform_point((v3.x, v3.y, v3.z))),
+    //                     color: point_color,
+    //                 },
+    //             )
+    //             .unwrap();
+    //             i += 1;
+    //         }
+    //     };
+    //     african_head_model.geometry[0]
+    //         .shapes
+    //         .iter()
+    //         .for_each(_draw_triangle);
+    //     window
+    //         .set_image("img", ndarray_to_image_rgba(&flip_vertically(&img.nd_img)))
+    //         .expect("Failed to set image");
+
+    //     // window
+    //     //     .set_image(
+    //     //         "img",
+    //     //         ndarray_to_image_gray(
+    //     //             &flip_vertically(&get_drawable_z_buffer(&z_buffer.nd_img)),
+    //     //             ImgConversionType::NORMALIZE,
+    //     //         ),
+    //     //     )
+    //     //     .expect("Failed to set image");
+    //     thread::sleep(Duration::from_millis(50));
+    // }
+
     loop {
         clear_screen(&mut img, &mut z_buffer);
         let mut _draw_triangle = |shape: &wavefront_obj::obj::Shape| {
@@ -319,6 +455,11 @@ fn main() {
                 let v1 = african_head_model.vertices[i1.0];
                 let v2 = african_head_model.vertices[i2.0];
                 let v3 = african_head_model.vertices[i3.0];
+
+                let uv1_option = i1.1.map(|t_index| african_head_model.tex_vertices[t_index]);
+                let uv2_option = i2.1.map(|t_index| african_head_model.tex_vertices[t_index]);
+                let uv3_option = i3.1.map(|t_index| african_head_model.tex_vertices[t_index]);
+
                 let transform_point = |(x, y, z): (f64, f64, f64)| {
                     (
                         ((x + 1.0) * ((img_width - 1) as f64 / 2.0)),
@@ -329,21 +470,36 @@ fn main() {
 
                 let side_1 = Vector3::new(v2.x - v1.x, v2.y - v1.y, v2.z - v1.z).normalize();
                 let side_2 = Vector3::new(v3.x - v2.x, v3.y - v2.y, v3.z - v2.z).normalize();
-                let normal = side_1.cross(&side_2).normalize();
-                let to_light_vec = Vector3::new(0.1, 0.1, i as f64 * 0.000001).normalize();
-                let diffuse_proportion = normal.dot(&to_light_vec);
+                let normal_vector = side_1.cross(&side_2).normalize();
 
-                let light_intensity = 0.7;
-                let diffuse_component = (diffuse_proportion * light_intensity * 255.0).max(0.0);
-                let ambient_component = 30.0;
-                let overall_light = (ambient_component + diffuse_component).min(255.0);
+                let point_color = MyTrianglePointColor::Colored(white);
+                let triangle_colors: [MyTrianglePointColor; 3] =
+                    match (uv1_option, uv2_option, uv3_option) {
+                        (Some(uv1), Some(uv2), Some(uv3)) => [
+                            MyTrianglePointColor::Textured(TextureCoords { u: uv1.u, v: uv1.v }),
+                            MyTrianglePointColor::Textured(TextureCoords { u: uv2.u, v: uv2.v }),
+                            MyTrianglePointColor::Textured(TextureCoords { u: uv3.u, v: uv3.v }),
+                        ],
+                        _ => [point_color, point_color, point_color],
+                    };
                 draw_triangle(
                     &mut img,
                     &mut z_buffer,
-                    Pointf::from(transform_point((v1.x, v1.y, v1.z))),
-                    Pointf::from(transform_point((v2.x, v2.y, v2.z))),
-                    Pointf::from(transform_point((v3.x, v3.y, v3.z))),
-                    [overall_light, overall_light, overall_light, 255.0],
+                    normal_vector,
+                    i,
+                    &african_head_texture,
+                    MyTrianglePoint {
+                        position: Pointf::from(transform_point((v1.x, v1.y, v1.z))),
+                        color: triangle_colors[0],
+                    },
+                    MyTrianglePoint {
+                        position: Pointf::from(transform_point((v2.x, v2.y, v2.z))),
+                        color: triangle_colors[1],
+                    },
+                    MyTrianglePoint {
+                        position: Pointf::from(transform_point((v3.x, v3.y, v3.z))),
+                        color: triangle_colors[2],
+                    },
                 )
                 .unwrap();
                 i += 1;
@@ -369,6 +525,42 @@ fn main() {
         thread::sleep(Duration::from_millis(50));
     }
 
+    // let color = sample_nd_img(&african_head_texture.nd_img, 0.0, 0.0);
+    // dbg!(color);
+    // draw_triangle(
+    //     &mut img,
+    //     &mut z_buffer,
+    //     &african_head_texture,
+    //     MyTrianglePoint {
+    //         position: Pointf::from((img_width as f64 * 0.5, img_height as f64 * 0.75)),
+    //         // color: MyTrianglePointColor::Colored(color),
+    // color: MyTrianglePointColor::Textured(TextureCoords {
+    //     u: img_width as f64 * 0.5,
+    //     v: img_height as f64 * 0.75,
+    // }),
+    //     },
+    //     MyTrianglePoint {
+    //         position: Pointf::from((img_width as f64 * 0.75, img_height as f64 * 0.25)),
+    //         // color: MyTrianglePointColor::Colored(color),
+    //         color: MyTrianglePointColor::Textured(TextureCoords {
+    //             u: img_width as f64 * 0.75,
+    //             v: img_height as f64 * 0.25,
+    //         }),
+    //     },
+    //     MyTrianglePoint {
+    //         position: Pointf::from((img_width as f64 * 0.25, img_height as f64 * 0.25)),
+    //         // color: MyTrianglePointColor::Colored(color),
+    //         color: MyTrianglePointColor::Textured(TextureCoords {
+    //             u: img_width as f64 * 0.25,
+    //             v: img_height as f64 * 0.25,
+    //         }),
+    //     },
+    // )
+    // .unwrap();
+    // window
+    //     .set_image("img", ndarray_to_image_rgba(&flip_vertically(&img.nd_img)))
+    //     .expect("Failed to set image");
+
     // african_head_model.geometry[0]
     //     .shapes
     //     .iter()
@@ -377,7 +569,7 @@ fn main() {
     // window
     //     .set_image("img", ndarray_to_image_rgba(&flip_vertically(&img.nd_img)))
     //     .expect("Failed to set image");
-    // wait_for_windows_to_close([window].to_vec()).expect("Failed to wait on windows");
+    wait_for_windows_to_close([window].to_vec()).expect("Failed to wait on windows");
 }
 
 // old version
