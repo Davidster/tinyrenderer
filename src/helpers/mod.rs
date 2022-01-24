@@ -9,6 +9,7 @@ use image::Luma;
 use image::Rgba;
 use image::RgbaImage;
 
+use nalgebra::Matrix4;
 use ndarray::concatenate;
 use ndarray::s;
 use ndarray::Array3;
@@ -313,6 +314,7 @@ pub struct TextureCoords {
 pub struct MyTrianglePoint {
     pub position: Pointf,
     pub color: MyTrianglePointColor,
+    pub normal: nalgebra::Vector4<f64>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -423,4 +425,46 @@ impl From<Point> for Pointf {
             z: point.z as f64,
         }
     }
+}
+
+impl From<nalgebra::Vector3<f64>> for Pointf {
+    fn from(vector: nalgebra::Vector3<f64>) -> Pointf {
+        Pointf {
+            x: vector[0],
+            y: vector[1],
+            z: vector[2],
+        }
+    }
+}
+
+// from https://en.wikipedia.org/wiki/Rotation_matrix
+pub fn make_rotation_matrix(pitch: f64, yaw: f64, roll: f64) -> Matrix4<f64> {
+    nalgebra::matrix![yaw.cos() * pitch.cos(), yaw.cos() * pitch.sin() * roll.sin() - yaw.sin() * roll.cos(), yaw.cos() * pitch.sin() * roll.cos() + yaw.sin() * roll.sin(), 0.0;
+                      yaw.sin() * pitch.cos(), yaw.sin() * pitch.sin() * roll.sin() + yaw.cos() * roll.cos(), yaw.sin() * pitch.sin() * roll.cos() - yaw.cos() * roll.sin(), 0.0;
+                      -pitch.sin(),            pitch.cos() * roll.sin(),                                      pitch.cos() * roll.cos(),                                      0.0;
+                      0.0,                     0.0,                                                           0.0,                                                           1.0;]
+}
+
+pub fn make_translation_matrix(translation: nalgebra::Vector3<f64>) -> Matrix4<f64> {
+    nalgebra::matrix![1.0, 0.0, 0.0, translation.x;
+                      0.0, 1.0, 0.0, translation.y;
+                      0.0, 0.0, 1.0, translation.z;
+                      0.0, 0.0, 0.0,           1.0;]
+}
+
+// from http://www.songho.ca/opengl/gl_projectionmatrix.html
+pub fn make_perspective_matrix(
+    near_plane_distance: f64,
+    far_plane_distance: f64,
+    vertical_fov: f64,
+    horizontal_fov: f64,
+) -> Matrix4<f64> {
+    let n = near_plane_distance;
+    let f = far_plane_distance;
+    let r = near_plane_distance * (horizontal_fov / 2.0).cos();
+    let t = near_plane_distance * (vertical_fov / 2.0).cos();
+    nalgebra::matrix![n/r, 0.0, 0.0,                           0.0;
+                      0.0, n/t, 0.0,                           0.0;
+                      0.0, 0.0, -1.0*(f+n)/(f-n), (-2.0*f*n)/(f-n);
+                      0.0, 0.0, -1.0,                          0.0;]
 }
