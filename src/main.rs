@@ -1,5 +1,6 @@
 mod helpers;
 mod segment_3d;
+mod model_renderer;
 
 use anyhow::Result;
 use nalgebra::{matrix, Vector3};
@@ -55,13 +56,13 @@ fn draw_triangle<'a>(
     let should_cull_point = |point: Pointf| {
         let _x = (point.x.round()) as i64;
         let _y = (point.y.round()) as i64;
-        let dist = -point.z + 1.0;
+        let dist = -point.z;
         _x < 0
             || _x >= img_width as i64
             || _y < 0
             || _y >= img_height as i64
-            || dist > 10.0
-            || dist < 1.1
+            || dist > 1.0
+            || dist < -1.0
     };
 
     let mut points = [p1, p2, p3].to_vec();
@@ -87,7 +88,31 @@ fn draw_triangle<'a>(
     let texture_option = _texture_option.into();
     let normal_map_option = _normal_map_option.into();
 
-    // let TBN =
+    let t_bt_vectors = match (p1.color, p2.color, p3.color, normal_map_option) {
+        (
+            MyTrianglePointColor::Textured(uv1),
+            MyTrianglePointColor::Textured(uv2),
+            MyTrianglePointColor::Textured(uv3),
+            Some(normal_map),
+        ) => {
+            let uv_mat = matrix![uv2.u - uv1.u, uv2.v - uv1.v;
+                                 uv3.u - uv1.u, uv3.v - uv1.v;];
+            let triangle_corner_edges = matrix![p2.position.x - p1.position.x, p2.position.y - p1.position.y, p2.position.z - p1.position.z;
+                                                p3.position.x - p1.position.x, p3.position.y - p1.position.y, p3.position.z - p1.position.z;];
+            match uv_mat.try_inverse() {
+                Some(uv_mat_inv) => {
+                    let tb_mat = uv_mat_inv * triangle_corner_edges;
+                    let t_vector =
+                        nalgebra::Vector3::new(tb_mat.m11, tb_mat.m12, tb_mat.m13).normalize();
+                    let bt_vector =
+                        nalgebra::Vector3::new(tb_mat.m21, tb_mat.m22, tb_mat.m23).normalize();
+                    Some((uv1, uv2, uv3, t_vector, bt_vector, normal_map))
+                }
+                None => None,
+            }
+        }
+        _ => None,
+    };
 
     let mut fill_half_triangle = |segment_a: Segment3D,
                                   segment_b: Segment3D|
@@ -113,7 +138,7 @@ fn draw_triangle<'a>(
                         }
                         let x = (point.x.round()) as usize;
                         let y = (point.y.round()) as usize;
-                        let dist = -point.z + 1.0;
+                        let dist = -point.z;
                         let current_z = z_buffer.get(x, y)[0];
                         if current_z == f64::NEG_INFINITY || current_z > dist {
                             z_buffer.set(x, y, [dist]);
@@ -127,69 +152,44 @@ fn draw_triangle<'a>(
                                 l1 * n1[0] + l2 * n2[0] + l3 * n3[0],
                                 l1 * n1[1] + l2 * n2[1] + l3 * n3[1],
                                 l1 * n1[2] + l2 * n2[2] + l3 * n3[2],
-                            ).normalize();
-                            let normal_vector =
-                                match (p1.color, p2.color, p3.color, normal_map_option) {
-                                    (
-                                        MyTrianglePointColor::Textured(uv1),
-                                        MyTrianglePointColor::Textured(uv2),
-                                        MyTrianglePointColor::Textured(uv3),
-                                        Some(normal_map),
-                                    ) => {
-                                        let uv_mat = matrix![uv2.u - uv1.u, uv2.v - uv1.v;
-                                                             uv3.u - uv1.u, uv3.v - uv1.v;];
-                                        let triangle_corner_edges = matrix![p2.position.x - p1.position.x, p2.position.y - p1.position.y, p2.position.z - p1.position.z;
-                                                                            p3.position.x - p1.position.x, p3.position.y - p1.position.y, p3.position.z - p1.position.z;];
-                                        match uv_mat.try_inverse() {
-                                            Some(uv_mat_inv) => {
-                                                let tb_mat = uv_mat_inv * triangle_corner_edges;
-                                                let t_vector = nalgebra::Vector3::new(
-                                                    tb_mat.m11, tb_mat.m12, tb_mat.m13,
-                                                    
-                                                ).normalize();
-                                                let bt_vector = nalgebra::Vector3::new(
-                                                    tb_mat.m21, tb_mat.m22, tb_mat.m23,
-                                                ).normalize();
-                                                // let tbn_mat = nalgebra::Matrix3::new(
-                                                //     tb_mat.m11, tb_mat.m12, tb_mat.m13,
-                                                //     tb_mat.m21, tb_mat.m22, tb_mat.m23,
-                                                //     face_normal_vector.x, face_normal_vector.y, face_normal_vector.z,
-                                                // );
-                                                let tbn_mat = nalgebra::Matrix3::new(
-                                                   t_vector.x, bt_vector.x, face_normal_vector.x,
-                                                   t_vector.y, bt_vector.y, face_normal_vector.y,
-                                                   t_vector.z, bt_vector.z, face_normal_vector.z,
-                                                );
-                                                let u = l1 * uv1.u + l2 * uv2.u + l3 * uv3.u;
-                                                let v = l1 * uv1.v + l2 * uv2.v + l3 * uv3.v;
-                                                let texture_width = normal_map.nd_img.shape()[0];
-                                                let texture_height = normal_map.nd_img.shape()[1];
-                                                let normal_map_normal_rgb = sample_nd_img(
-                                                    &normal_map.nd_img,
-                                                    u * texture_width as f64,
-                                                    v * texture_height as f64,
-                                                );
-                                                let fix_rgb_range = |normal_coord_in_rgb_range| ((normal_coord_in_rgb_range / 255.0) * 2.0) - 1.0;
-                                                let normal_map_normal = nalgebra::Vector3::new(
-                                                    fix_rgb_range(normal_map_normal_rgb[0]), 
-                                                    fix_rgb_range(normal_map_normal_rgb[1]), 
-                                                    fix_rgb_range(normal_map_normal_rgb[2]),
-                                                );
-                                                (tbn_mat * normal_map_normal).normalize()
-                                            },
-                                            None => {
-                                                // this seems to happen when two of more of the points on the triangle share a uv coordinate
-                                                // in this case, we'll just ignore the normal map and use the face normal vector instead
-                                                // println!("Couldn't invert uv_mat: {:?}, uv1={:?}, uv2={:?}, uv3={:?}", uv_mat, uv1, uv2, uv3);
-                                                face_normal_vector
-                                            }
-                                        }
-                                                                           
-                                        
-                                    }
-                                    _ => face_normal_vector,
-                                };
+                            )
+                            .normalize();
 
+                            let normal_vector = match t_bt_vectors {
+                                Some((uv1, uv2, uv3, t_vector, bt_vector, normal_map)) => {
+                                    let u = l1 * uv1.u + l2 * uv2.u + l3 * uv3.u;
+                                    let v = l1 * uv1.v + l2 * uv2.v + l3 * uv3.v;
+                                    let texture_width = normal_map.nd_img.shape()[0];
+                                    let texture_height = normal_map.nd_img.shape()[1];
+                                    let normal_map_normal_rgb = sample_nd_img(
+                                        &normal_map.nd_img,
+                                        u * texture_width as f64,
+                                        v * texture_height as f64,
+                                    );
+                                    let fix_rgb_range = |normal_coord_in_rgb_range| {
+                                        ((normal_coord_in_rgb_range / 255.0) * 2.0) - 1.0
+                                    };
+                                    let normal_map_normal = nalgebra::Vector3::new(
+                                        fix_rgb_range(normal_map_normal_rgb[0]),
+                                        fix_rgb_range(normal_map_normal_rgb[1]),
+                                        fix_rgb_range(normal_map_normal_rgb[2]),
+                                    );
+                                    let tbn_mat = nalgebra::Matrix3::new(
+                                        t_vector.x,
+                                        bt_vector.x,
+                                        face_normal_vector.x,
+                                        t_vector.y,
+                                        bt_vector.y,
+                                        face_normal_vector.y,
+                                        t_vector.z,
+                                        bt_vector.z,
+                                        face_normal_vector.z,
+                                    );
+                                    (tbn_mat * normal_map_normal).normalize()
+                                }
+
+                                None => face_normal_vector,
+                            };
                             let color_option = match (p1.color, p2.color, p3.color) {
                                 (
                                     MyTrianglePointColor::Colored(c1),
@@ -316,7 +316,7 @@ fn get_drawable_z_buffer(z_buffer: &NDGrayImage) -> NDGrayImage {
 #[show_image::main]
 fn main() {
     let mut img = MyRgbaImage {
-        nd_img: Array3::zeros((2000, 2000, 4)),
+        nd_img: Array3::zeros((1000, 1000, 4)),
     };
     let img_width = img.nd_img.shape()[0];
     let img_height = img.nd_img.shape()[1];
@@ -567,46 +567,90 @@ fn main() {
         let mut _draw_triangle = |shape: &wavefront_obj::obj::Shape| {
             let prim = shape.primitive;
             if let wavefront_obj::obj::Primitive::Triangle(i1, i2, i3) = prim {
-                let camera_direction = nalgebra::Vector3::new(0.04, 0.04, 0.1).normalize();
-                let camera_direction_scaled = camera_direction * 0.00001;
-                let camera_pos = nalgebra::Point3::from(camera_direction);
+                // let camera_direction = nalgebra::Vector3::new(0.04, 0.04, 0.1).normalize();
+                let camera_direction = nalgebra::Vector3::new(0.0, 0.0, 1.0).normalize();
+                let camera_direction_scaled = camera_direction * 2.0;
+                let camera_pos = nalgebra::Point3::from(camera_direction_scaled);
 
                 let camera_direction_matrix = nalgebra::Matrix4::look_at_rh(
                     &camera_pos,
                     &nalgebra::Point3::new(0.0, 0.0, 0.0),
                     &nalgebra::Vector3::new(0.0, 1.0, 0.0),
                 );
+                // let camera_direction_matrix = nalgebra::Matrix4::<f64>::identity();
                 // dbg!(camera_direction_scaled);
                 // let camera_translation_matrix = make_translation_matrix(-camera_direction_scaled);
 
-                let rotation_matrix = make_rotation_matrix(0.004 * (time as f64), 0.0, 0.0);
+                // let rotation_matrix = nalgebra::Matrix4::<f64>::identity();
+                let rotation_matrix = make_rotation_matrix(0.04 * (time as f64), 0.0, 0.0);
                 // let rotation_matrix = make_rotation_matrix(0.0, 0.0, 0.0);
-                let translation_matrix = make_translation_matrix(nalgebra::Vector3::new(0.0, 0.0, 0.0));
+                let translation_matrix =
+                    make_translation_matrix(nalgebra::Vector3::new(0.0, 0.0, -0.004 * time as f64));
                 // let translation_matrix =
                 //     make_translation_matrix(camera_direction * (-0.004 * time as f64));
 
-                let model_view_matrix = camera_direction_matrix * translation_matrix * rotation_matrix;
+                let model_view_matrix =
+                    camera_direction_matrix * translation_matrix * rotation_matrix;
                 let horizontal_fov = PI / 2.0;
-                // let perspective_matrix = make_perspective_matrix(1.1, 10.0, horizontal_fov, horizontal_fov * (img_height as f64 / img_width as f64));
+                let perspective_matrix = make_perspective_matrix(
+                    10.0,
+                    1.0,
+                    horizontal_fov,
+                    // horizontal_fov,
+                    horizontal_fov * (img_height as f64 / img_width as f64),
+                );
 
+                let viewport_matrix =
+                    make_scale_matrix(nalgebra::Vector3::new(
+                        (img_width - 1) as f64 / 2.0,
+                        (img_height - 1) as f64 / 2.0,
+                        1.0,
+                    )) * make_translation_matrix(nalgebra::Vector3::new(1.0, 1.0, 0.0));
+
+                // Viewport * Projection * View * Model * vertex
                 let transform_point = |local_point: (f64, f64, f64)| {
-                    let global_point = model_view_matrix
+                    let global_point = viewport_matrix
+                        * perspective_matrix
+                        * model_view_matrix
                         * nalgebra::Vector4::new(local_point.0, local_point.1, local_point.2, 1.0);
 
-                    let x = global_point.x;
-                    let y = global_point.y;
-                    let z = global_point.z;
+                    let x = global_point.x / global_point.w;
+                    let y = global_point.y / global_point.w;
+                    let z = global_point.z / global_point.w;
 
-                    let _z = z - 2.0;
+                    (x, y, z)
+
+                    // dbg!(x, y, z);
+
+                    // let _z = z - 2.0;
                     // apply projection
-                    (
-                        (((x / -_z) + 1.0) * ((img_width - 1) as f64 / 2.0)),
-                        (((y / -_z) + 1.0) * ((img_height - 1) as f64 / 2.0)),
-                        // (((x) + 1.0) * ((img_width - 1) as f64 / 2.0)),
-                        // (((y) + 1.0) * ((img_height - 1) as f64 / 2.0)),
-                        _z,
-                    )
+                    // (
+                    //     (((x + 1.0) / 2.0) * ((img_width - 1) as f64)),
+                    //     (((y + 1.0) / 2.0) * ((img_height - 1) as f64)),
+                    //     // (((x) + 1.0) * ((img_width - 1) as f64 / 2.0)),
+                    //     // (((y) + 1.0) * ((img_height - 1) as f64 / 2.0)),
+                    //     z,
+                    // )
                 };
+
+                // let transform_point = |local_point: (f64, f64, f64)| {
+                //     let global_point = model_view_matrix
+                //         * nalgebra::Vector4::new(local_point.0, local_point.1, local_point.2, 1.0);
+
+                //     let x = global_point.x;
+                //     let y = global_point.y;
+                //     let z = global_point.z;
+
+                //     let _z = z - 2.0;
+                //     // apply projection
+                //     (
+                //         (((x / -_z) + 1.0) * ((img_width - 1) as f64 / 2.0)),
+                //         (((y / -_z) + 1.0) * ((img_height - 1) as f64 / 2.0)),
+                //         // (((x) + 1.0) * ((img_width - 1) as f64 / 2.0)),
+                //         // (((y) + 1.0) * ((img_height - 1) as f64 / 2.0)),
+                //         _z,
+                //     )
+                // };
 
                 let transform_normal = |local_normal: nalgebra::Vector3<f64>| {
                     model_view_matrix
@@ -666,9 +710,13 @@ fn main() {
                     &mut z_buffer,
                     &camera_pos,
                     time,
-                    &african_head_texture, 
+                    &african_head_texture,
                     // Some(&african_head_normal_map),
-                    if showing_normal_map { Some(&african_head_normal_map) } else { None },
+                    if showing_normal_map {
+                        Some(&african_head_normal_map)
+                    } else {
+                        None
+                    },
                     MyTrianglePoint {
                         position: Pointf::from(transform_point((v1.x, v1.y, v1.z))),
                         // color: point_color,
@@ -712,7 +760,7 @@ fn main() {
         //         ),
         //     )
         //     .expect("Failed to set image");
-        // thread::sleep(Duration::from_millis(50));
+        thread::sleep(Duration::from_millis(50));
     }
 
     // let color = sample_nd_img(&african_head_texture.nd_img, 0.0, 0.0);

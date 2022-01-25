@@ -452,6 +452,13 @@ pub fn make_translation_matrix(translation: nalgebra::Vector3<f64>) -> Matrix4<f
                       0.0, 0.0, 0.0,           1.0;]
 }
 
+pub fn make_scale_matrix(scale: nalgebra::Vector3<f64>) -> Matrix4<f64> {
+    nalgebra::matrix![scale.x, 0.0,     0.0,     0.0;
+                      0.0,     scale.y, 0.0,     0.0;
+                      0.0,     0.0,     scale.z, 0.0;
+                      0.0,     0.0,     0.0,     1.0;]
+}
+
 // from http://www.songho.ca/opengl/gl_projectionmatrix.html
 pub fn make_perspective_matrix(
     near_plane_distance: f64,
@@ -461,8 +468,8 @@ pub fn make_perspective_matrix(
 ) -> Matrix4<f64> {
     let n = near_plane_distance;
     let f = far_plane_distance;
-    let r = near_plane_distance * (horizontal_fov / 2.0).cos();
-    let t = near_plane_distance * (vertical_fov / 2.0).cos();
+    let r = near_plane_distance * (horizontal_fov / 2.0).tan();
+    let t = near_plane_distance * (vertical_fov / 2.0).tan();
     nalgebra::matrix![n/r, 0.0, 0.0,                           0.0;
                       0.0, n/t, 0.0,                           0.0;
                       0.0, 0.0, -1.0*(f+n)/(f-n), (-2.0*f*n)/(f-n);
