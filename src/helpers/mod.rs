@@ -279,13 +279,19 @@ pub fn invert(img: &Array3<f64>) -> Array3<f64> {
 
 // taken from https://en.wikipedia.org/wiki/Barycentric_coordinate_system#Edge_approach
 pub fn get_barycentric_coords_for_point_in_triangle(
-    triangle: (Pointf, Pointf, Pointf),
-    point: Pointf,
+    triangle: (
+        nalgebra::Vector4<f64>,
+        nalgebra::Vector4<f64>,
+        nalgebra::Vector4<f64>,
+    ),
+    point: nalgebra::Vector3<f64>,
 ) -> (f64, f64, f64) {
     let (p1, p2, p3) = triangle;
-    let detT = (((p2.y - p3.y) * (p1.x - p3.x)) + ((p3.x - p2.x) * (p1.y - p3.y)));
-    let lambda_1 = (((p2.y - p3.y) * (point.x - p3.x)) + ((p3.x - p2.x) * (point.y - p3.y))) / detT;
-    let lambda_2 = (((p3.y - p1.y) * (point.x - p3.x)) + ((p1.x - p3.x) * (point.y - p3.y))) / detT;
+    let det_t = ((p2.y - p3.y) * (p1.x - p3.x)) + ((p3.x - p2.x) * (p1.y - p3.y));
+    let lambda_1 =
+        (((p2.y - p3.y) * (point.x - p3.x)) + ((p3.x - p2.x) * (point.y - p3.y))) / det_t;
+    let lambda_2 =
+        (((p3.y - p1.y) * (point.x - p3.x)) + ((p1.x - p3.x) * (point.y - p3.y))) / det_t;
     let lambda_3 = 1.0 - lambda_1 - lambda_2;
     (lambda_1, lambda_2, lambda_3)
 }
@@ -312,7 +318,7 @@ pub struct TextureCoords {
 
 #[derive(Clone, Copy, Debug)]
 pub struct MyTrianglePoint {
-    pub position: Pointf,
+    pub position: nalgebra::Vector3<f64>,
     pub color: MyTrianglePointColor,
     pub normal: nalgebra::Vector4<f64>,
 }
@@ -430,9 +436,19 @@ impl From<Point> for Pointf {
 impl From<nalgebra::Vector3<f64>> for Pointf {
     fn from(vector: nalgebra::Vector3<f64>) -> Pointf {
         Pointf {
-            x: vector[0],
-            y: vector[1],
-            z: vector[2],
+            x: vector.x,
+            y: vector.y,
+            z: vector.z,
+        }
+    }
+}
+
+impl From<nalgebra::Vector4<f64>> for Pointf {
+    fn from(vector: nalgebra::Vector4<f64>) -> Pointf {
+        Pointf {
+            x: vector.x,
+            y: vector.y,
+            z: vector.z,
         }
     }
 }

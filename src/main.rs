@@ -1,6 +1,6 @@
 mod helpers;
-mod segment_3d;
 mod model_renderer;
+mod segment_3d;
 
 use anyhow::Result;
 use nalgebra::{matrix, Vector3};
@@ -22,8 +22,8 @@ const white: [f64; 4] = [255.0, 255.0, 255.0, 255.0];
 
 fn draw_line(
     img: &mut MyRgbaImage,
-    start_point: Pointf,
-    end_point: Pointf,
+    start_point: nalgebra::Vector3<f64>,
+    end_point: nalgebra::Vector3<f64>,
     color: [f64; 4],
 ) -> Result<()> {
     let mut points = [start_point, end_point].to_vec();
@@ -53,7 +53,7 @@ fn draw_triangle<'a>(
 ) -> Result<()> {
     let img_width = img.nd_img.shape()[0];
     let img_height = img.nd_img.shape()[1];
-    let should_cull_point = |point: Pointf| {
+    let should_cull_point = |point: nalgebra::Vector3<f64>| {
         let _x = (point.x.round()) as i64;
         let _y = (point.y.round()) as i64;
         let dist = -point.z;
@@ -143,7 +143,26 @@ fn draw_triangle<'a>(
                         if current_z == f64::NEG_INFINITY || current_z > dist {
                             z_buffer.set(x, y, [dist]);
                             let (l1, l2, l3) = get_barycentric_coords_for_point_in_triangle(
-                                (p1.position, p2.position, p3.position),
+                                (
+                                    nalgebra::Vector4::new(
+                                        p1.position.x,
+                                        p1.position.y,
+                                        p1.position.z,
+                                        1.0,
+                                    ),
+                                    nalgebra::Vector4::new(
+                                        p2.position.x,
+                                        p2.position.y,
+                                        p2.position.z,
+                                        1.0,
+                                    ),
+                                    nalgebra::Vector4::new(
+                                        p3.position.x,
+                                        p3.position.y,
+                                        p3.position.z,
+                                        1.0,
+                                    ),
+                                ),
                                 point,
                             );
                             let (n1, n2, n3) = (p1.normal, p2.normal, p3.normal);
@@ -316,7 +335,7 @@ fn get_drawable_z_buffer(z_buffer: &NDGrayImage) -> NDGrayImage {
 #[show_image::main]
 fn main() {
     let mut img = MyRgbaImage {
-        nd_img: Array3::zeros((1000, 1000, 4)),
+        nd_img: Array3::zeros((750, 750, 4)),
     };
     let img_width = img.nd_img.shape()[0];
     let img_height = img.nd_img.shape()[1];
@@ -332,8 +351,8 @@ fn main() {
     // write_nd_rgba_img_to_file("./2.png", &flip_vertically(&img.nd_img)).unwrap();
     // draw_line_2(
     //     &mut img,
-    //     Pointf::from((80, 40)),
-    //     Pointf::from((13, 20)),
+    //     nalgebra::Vector3<f64>::from((80, 40)),
+    //     nalgebra::Vector3<f64>::from((13, 20)),
     //     red,
     // )
     // .unwrap();
@@ -371,8 +390,8 @@ fn main() {
     //     let line_2_angle = line_angle + 0.5;
     //     draw_line_2(
     //         &mut img,
-    //         Pointf::from(center),
-    //         Pointf::from((
+    //         nalgebra::Vector3<f64>::from(center),
+    //         nalgebra::Vector3<f64>::from((
     //             center.x as f64 + (line_2_angle.cos() * line_length).round(),
     //             center.y as f64 + (line_2_angle.sin() * line_length).round(),
     //         )),
@@ -449,9 +468,9 @@ fn main() {
     //             };
     //             // draw_triangle(
     //             //     &mut img,
-    //             //     Pointf::from(transform_point((v1.x, v1.y))),
-    //             //     Pointf::from(transform_point((v2.x, v2.y))),
-    //             //     Pointf::from(transform_point((v3.x, v3.y))),
+    //             //     nalgebra::Vector3<f64>::from(transform_point((v1.x, v1.y))),
+    //             //     nalgebra::Vector3<f64>::from(transform_point((v2.x, v2.y))),
+    //             //     nalgebra::Vector3<f64>::from(transform_point((v3.x, v3.y))),
     //             //     colors[i % colors.len()],
     //             // )
     //             // .unwrap();
@@ -461,11 +480,11 @@ fn main() {
     //                             color: [f64; 4]| {
     //                 draw_line(
     //                     &mut img,
-    //                     Pointf::from((
+    //                     nalgebra::Vector3<f64>::from((
     //                         ((v_1.x + 1.0) * ((img_width - 1) as f64 / 2.0)).round(),
     //                         ((v_1.y + 1.0) * ((img_height - 1) as f64 / 2.0)).round(),
     //                     )),
-    //                     Pointf::from((
+    //                     nalgebra::Vector3<f64>::from((
     //                         ((v_2.x + 1.0) * ((img_width - 1) as f64 / 2.0)).round(),
     //                         ((v_2.y + 1.0) * ((img_height - 1) as f64 / 2.0)).round(),
     //                     )),
@@ -522,15 +541,15 @@ fn main() {
     //                 &mut img,
     //                 &mut z_buffer,
     //                 MyTrianglePoint {
-    //                     position: Pointf::from(transform_point((v1.x, v1.y, v1.z))),
+    //                     position: nalgebra::Vector3<f64>::from(transform_point((v1.x, v1.y, v1.z))),
     //                     color: point_color,
     //                 },
     //                 MyTrianglePoint {
-    //                     position: Pointf::from(transform_point((v2.x, v2.y, v2.z))),
+    //                     position: nalgebra::Vector3<f64>::from(transform_point((v2.x, v2.y, v2.z))),
     //                     color: point_color,
     //                 },
     //                 MyTrianglePoint {
-    //                     position: Pointf::from(transform_point((v3.x, v3.y, v3.z))),
+    //                     position: nalgebra::Vector3<f64>::from(transform_point((v3.x, v3.y, v3.z))),
     //                     color: point_color,
     //                 },
     //             )
@@ -582,10 +601,10 @@ fn main() {
                 // let camera_translation_matrix = make_translation_matrix(-camera_direction_scaled);
 
                 // let rotation_matrix = nalgebra::Matrix4::<f64>::identity();
-                let rotation_matrix = make_rotation_matrix(0.04 * (time as f64), 0.0, 0.0);
+                let rotation_matrix = make_rotation_matrix(0.025 * (time as f64), 0.0, 0.0);
                 // let rotation_matrix = make_rotation_matrix(0.0, 0.0, 0.0);
                 let translation_matrix =
-                    make_translation_matrix(nalgebra::Vector3::new(0.0, 0.0, -0.004 * time as f64));
+                    make_translation_matrix(nalgebra::Vector3::new(0.0, 0.0, 0.0));
                 // let translation_matrix =
                 //     make_translation_matrix(camera_direction * (-0.004 * time as f64));
 
@@ -618,7 +637,7 @@ fn main() {
                     let y = global_point.y / global_point.w;
                     let z = global_point.z / global_point.w;
 
-                    (x, y, z)
+                    nalgebra::Vector3::new(x, y, z)
 
                     // dbg!(x, y, z);
 
@@ -711,28 +730,28 @@ fn main() {
                     &camera_pos,
                     time,
                     &african_head_texture,
-                    // Some(&african_head_normal_map),
-                    if showing_normal_map {
-                        Some(&african_head_normal_map)
-                    } else {
-                        None
-                    },
+                    Some(&african_head_normal_map),
+                    // if showing_normal_map {
+                    //     Some(&african_head_normal_map)
+                    // } else {
+                    //     None
+                    // },
                     MyTrianglePoint {
-                        position: Pointf::from(transform_point((v1.x, v1.y, v1.z))),
+                        position: transform_point((v1.x, v1.y, v1.z)),
                         // color: point_color,
                         color: triangle_colors[0],
                         normal: n1,
                         // normal: face_normal,
                     },
                     MyTrianglePoint {
-                        position: Pointf::from(transform_point((v2.x, v2.y, v2.z))),
+                        position: transform_point((v2.x, v2.y, v2.z)),
                         // color: point_color,
                         color: triangle_colors[1],
                         normal: n2,
                         // normal: face_normal,
                     },
                     MyTrianglePoint {
-                        position: Pointf::from(transform_point((v3.x, v3.y, v3.z))),
+                        position: transform_point((v3.x, v3.y, v3.z)),
                         // color: point_color,
                         color: triangle_colors[2],
                         normal: n3,
@@ -760,7 +779,7 @@ fn main() {
         //         ),
         //     )
         //     .expect("Failed to set image");
-        thread::sleep(Duration::from_millis(50));
+        // thread::sleep(Duration::from_millis(50));
     }
 
     // let color = sample_nd_img(&african_head_texture.nd_img, 0.0, 0.0);
@@ -778,7 +797,7 @@ fn main() {
     //     &african_head_texture,
     //     None,
     //     MyTrianglePoint {
-    //         position: Pointf::from((img_width as f64 * 0.5, img_height as f64 * 0.75)),
+    //         position: nalgebra::Vector3<f64>::from((img_width as f64 * 0.5, img_height as f64 * 0.75)),
     //         // color: MyTrianglePointColor::Colored(color),
     //         color: MyTrianglePointColor::Textured(TextureCoords {
     //             u: img_width as f64 * 0.5,
@@ -787,7 +806,7 @@ fn main() {
     //         normal: nalgebra::Vector4::new(0.0, 0.0, 1.0, 0.0),
     //     },
     //     MyTrianglePoint {
-    //         position: Pointf::from((img_width as f64 * 0.75, img_height as f64 * 0.25)),
+    //         position: nalgebra::Vector3<f64>::from((img_width as f64 * 0.75, img_height as f64 * 0.25)),
     //         // color: MyTrianglePointColor::Colored(color),
     //         color: MyTrianglePointColor::Textured(TextureCoords {
     //             u: img_width as f64 * 0.75,
@@ -796,7 +815,7 @@ fn main() {
     //         normal: nalgebra::Vector4::new(0.0, 0.0, 1.0, 0.0),
     //     },
     //     MyTrianglePoint {
-    //         position: Pointf::from((img_width as f64 * 0.25, img_height as f64 * 0.25)),
+    //         position: nalgebra::Vector3<f64>::from((img_width as f64 * 0.25, img_height as f64 * 0.25)),
     //         // color: MyTrianglePointColor::Colored(color),
     //         color: MyTrianglePointColor::Textured(TextureCoords {
     //             u: img_width as f64 * 0.25,
