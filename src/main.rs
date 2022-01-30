@@ -146,6 +146,7 @@ fn main() {
                     _ => normal_interp,
                 };
 
+                // let albedo_color_option = Some(WHITE);
                 let albedo_color_option =
                     if let Some(wavefront_obj::obj::TVertex { u, v, .. }) =
                         texture_coordinate_interp

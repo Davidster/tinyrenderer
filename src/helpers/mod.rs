@@ -318,7 +318,7 @@ pub fn get_drawable_z_buffer(z_buffer: &NDGrayImage) -> NDGrayImage {
 }
 
 pub fn load_model(path: &str) -> Result<wavefront_obj::obj::Object> {
-    let mut objects = wavefront_obj::obj::parse(read_to_string(path)?)?.objects;
+    let mut objects = wavefront_obj::obj::parse(std::fs::read_to_string(path)?)?.objects;
     Ok(objects.remove(0))
 }
 

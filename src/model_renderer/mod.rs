@@ -1,6 +1,7 @@
 use super::helpers::*;
 use super::segment_3d::*;
 
+use anyhow::Result;
 use nalgebra::matrix;
 
 pub struct ModelRendererState {
@@ -42,7 +43,7 @@ pub fn draw_line(
     color: [f64; 4],
 ) -> Result<()> {
     let mut points = [start_point, end_point].to_vec();
-    points.sort_by(|a, b| b.x.partial_cmp(&a.x).unwrap_or(Ordering::Equal));
+    points.sort_by(|a, b| b.x.partial_cmp(&a.x).unwrap_or(std::cmp::Ordering::Equal));
     let segment = Segment3D::new(points[0], points[1]);
     // println!("Created segment: {:?}", segment);
     segment.get_point_iterator(None)?.for_each(|point| {
