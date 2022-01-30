@@ -17,6 +17,12 @@ use ndarray::Axis;
 
 use show_image::WindowProxy;
 
+pub const BLACK: [f64; 4] = [0.0, 0.0, 0.0, 255.0];
+pub const RED: [f64; 4] = [255.0, 0.0, 0.0, 255.0];
+pub const GREEN: [f64; 4] = [0.0, 255.0, 0.0, 255.0];
+pub const BLUE: [f64; 4] = [0.0, 0.0, 255.0, 255.0];
+pub const WHITE: [f64; 4] = [255.0, 255.0, 255.0, 255.0];
+
 pub type NDRgbaImage = Array3<f64>;
 pub type NDGrayImage = Array3<f64>;
 
@@ -294,6 +300,26 @@ pub fn get_barycentric_coords_for_point_in_triangle(
         (((p3.y - p1.y) * (point.x - p3.x)) + ((p1.x - p3.x) * (point.y - p3.y))) / det_t;
     let lambda_3 = 1.0 - lambda_1 - lambda_2;
     (lambda_1, lambda_2, lambda_3)
+}
+
+pub fn get_drawable_z_buffer(z_buffer: &NDGrayImage) -> NDGrayImage {
+    let width = z_buffer.shape()[0];
+    let height = z_buffer.shape()[1];
+    let mut drawable_z_buffer: NDGrayImage = ndarray::Array3::zeros((width, height, 1));
+    for x in 0..width {
+        for y in 0..height {
+            let val = z_buffer[[x, y, 0]].max(0.0);
+            if val > 0.0 {
+                drawable_z_buffer[[x, y, 0]] = 1.0 / val;
+            }
+        }
+    }
+    drawable_z_buffer
+}
+
+pub fn load_model(path: &str) -> Result<wavefront_obj::obj::Object> {
+    let mut objects = wavefront_obj::obj::parse(read_to_string(path)?)?.objects;
+    Ok(objects.remove(0))
 }
 
 #[derive(Clone, Copy, Debug)]
