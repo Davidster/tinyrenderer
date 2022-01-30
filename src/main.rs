@@ -9,11 +9,13 @@ use model_renderer::*;
 
 #[show_image::main]
 fn main() {
-    let african_head_model = load_model("./src/african_head.obj").unwrap();
-    let _african_head_texture =
-        flip_vertically(&load_nd_rgba_img_from_file("./src/african_head_diffuse.png").unwrap());
-    let _african_head_normal_map =
-        flip_vertically(&load_nd_rgba_img_from_file("./src/african_head_normal.png").unwrap());
+    let african_head_model = load_model("./src/african_head/african_head.obj").unwrap();
+    let _african_head_texture = flip_vertically(
+        &load_nd_rgba_img_from_file("./src/african_head/african_head_diffuse.png").unwrap(),
+    );
+    let _african_head_normal_map = flip_vertically(
+        &load_nd_rgba_img_from_file("./src/african_head/african_head_normal.png").unwrap(),
+    );
     let african_head_texture = MyRgbaImage {
         nd_img: _african_head_texture,
     };
