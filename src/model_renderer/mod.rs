@@ -1,7 +1,10 @@
 use super::helpers::*;
 use super::segment_3d::*;
 
+use rayon::prelude::*;
 use std::cell::Cell;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 use anyhow::Result;
 use nalgebra::matrix;
@@ -183,81 +186,78 @@ pub fn clear_screen(model_renderer_state: &mut ModelRendererState) {
     }
 }
 
-pub fn render_mesh_component<
-    // Option<Vector3, Option<wavefront_obj::obj::TVertex>
-    V: FnMut(VertexShaderArgs) -> VertexShaderResult,
-    F: FnMut(FragmentShaderArgs) -> FragmentShaderResult,
->(
+pub fn render_mesh_component(
     model_renderer_state: &mut ModelRendererState,
     mesh: &wavefront_obj::obj::Object,
-    vertex_shader: &mut V,
-    fragment_shader: &mut F,
+    vertex_shader: Box<dyn (Fn(VertexShaderArgs) -> VertexShaderResult) + Send + Sync>,
+    fragment_shader: Box<dyn (Fn(FragmentShaderArgs) -> FragmentShaderResult) + Send + Sync>,
 ) {
     let frame_width = model_renderer_state.frame_buffer.nd_img.shape()[0];
     let frame_height = model_renderer_state.frame_buffer.nd_img.shape()[1];
     // let texture_option = &model_renderer_state.texture;
     // let normal_map_option = &model_renderer_state.normal_map;
-    let frame_buffer = &mut model_renderer_state.frame_buffer;
-    let z_buffer = &mut model_renderer_state.z_buffer;
-    let mut run_shaders_on_mesh = |mesh: &wavefront_obj::obj::Object| {
-        let shapes = &mesh.geometry[0].shapes;
-        let vertex_shader_results: Vec<
-            Option<(VertexShaderResult, VertexShaderResult, VertexShaderResult)>,
-        > = shapes
-            .iter()
-            .map(|shape| {
-                match shape.primitive {
-                    wavefront_obj::obj::Primitive::Triangle(i1, i2, i3) => {
-                        // get triangle vertices and run them through the vertex shader
-                        let v1 = mesh.vertices[i1.0];
-                        let v2 = mesh.vertices[i2.0];
-                        let v3 = mesh.vertices[i3.0];
-                        let get_face_normal = || {
-                            let side_1 =
-                                nalgebra::Vector3::new(v2.x - v1.x, v2.y - v1.y, v2.z - v1.z)
-                                    .normalize();
-                            let side_2 =
-                                nalgebra::Vector3::new(v3.x - v2.x, v3.y - v2.y, v3.z - v2.z)
-                                    .normalize();
-                            let face_normal = side_1.cross(&side_2).normalize();
-                            nalgebra::Vector4::new(face_normal.x, face_normal.y, face_normal.z, 0.0)
+    let frame_buffer_clone = Arc::new(Mutex::new(model_renderer_state.frame_buffer.clone()));
+    let z_buffer_clone = Arc::new(Mutex::new(model_renderer_state.z_buffer.clone()));
+    let shapes = &mesh.geometry[0].shapes;
+    let vertex_shader_results: Vec<
+        Option<(VertexShaderResult, VertexShaderResult, VertexShaderResult)>,
+    > = shapes
+        // .iter()
+        .par_iter()
+        .map(|shape| {
+            match shape.primitive {
+                wavefront_obj::obj::Primitive::Triangle(i1, i2, i3) => {
+                    // get triangle vertices and run them through the vertex shader
+                    let v1 = mesh.vertices[i1.0];
+                    let v2 = mesh.vertices[i2.0];
+                    let v3 = mesh.vertices[i3.0];
+                    let get_face_normal = || {
+                        let side_1 = nalgebra::Vector3::new(v2.x - v1.x, v2.y - v1.y, v2.z - v1.z)
+                            .normalize();
+                        let side_2 = nalgebra::Vector3::new(v3.x - v2.x, v3.y - v2.y, v3.z - v2.z)
+                            .normalize();
+                        let face_normal = side_1.cross(&side_2).normalize();
+                        nalgebra::Vector4::new(face_normal.x, face_normal.y, face_normal.z, 0.0)
+                    };
+                    let get_normal_for_vertex =
+                        |(_, _, index_option): wavefront_obj::obj::VTNIndex| {
+                            index_option
+                                .map(|index| mesh.normals[index])
+                                .map(|normal| {
+                                    nalgebra::Vector4::new(normal.x, normal.y, normal.z, 0.0)
+                                })
+                                .unwrap_or_else(get_face_normal)
                         };
-                        let get_normal_for_vertex =
-                            |(_, _, index_option): wavefront_obj::obj::VTNIndex| {
-                                index_option
-                                    .map(|index| mesh.normals[index])
-                                    .map(|normal| {
-                                        nalgebra::Vector4::new(normal.x, normal.y, normal.z, 0.0)
-                                    })
-                                    .unwrap_or_else(get_face_normal)
-                            };
 
-                        let n1 = get_normal_for_vertex(i1);
-                        let n2 = get_normal_for_vertex(i2);
-                        let n3 = get_normal_for_vertex(i3);
+                    let n1 = get_normal_for_vertex(i1);
+                    let n2 = get_normal_for_vertex(i2);
+                    let n3 = get_normal_for_vertex(i3);
 
-                        let get_texture_for_vertex =
-                            |(_, index_option, _): wavefront_obj::obj::VTNIndex| {
-                                index_option.map(|index| mesh.tex_vertices[index])
-                            };
-                        let uv1_option = get_texture_for_vertex(i1);
-                        let uv2_option = get_texture_for_vertex(i2);
-                        let uv3_option = get_texture_for_vertex(i3);
+                    let get_texture_for_vertex =
+                        |(_, index_option, _): wavefront_obj::obj::VTNIndex| {
+                            index_option.map(|index| mesh.tex_vertices[index])
+                        };
+                    let uv1_option = get_texture_for_vertex(i1);
+                    let uv2_option = get_texture_for_vertex(i2);
+                    let uv3_option = get_texture_for_vertex(i3);
 
-                        Some((
-                            vertex_shader(VertexShaderArgs::from((v1, n1, uv1_option))),
-                            vertex_shader(VertexShaderArgs::from((v2, n2, uv2_option))),
-                            vertex_shader(VertexShaderArgs::from((v3, n3, uv3_option))),
-                        ))
-                    }
-                    _ => None,
+                    Some((
+                        vertex_shader(VertexShaderArgs::from((v1, n1, uv1_option))),
+                        vertex_shader(VertexShaderArgs::from((v2, n2, uv2_option))),
+                        vertex_shader(VertexShaderArgs::from((v3, n3, uv3_option))),
+                    ))
                 }
-            })
-            .collect();
-        let error_option = vertex_shader_results
-            .iter()
+                _ => None,
+            }
+        })
+        .collect();
+    let before = std::time::Instant::now();
+    
+    // let error_option = vertex_shader_results.iter()...
+    vertex_shader_results
+            .par_iter()
             .flatten()
-            .map(|(vsr1, vsr2, vsr3)| {
+            .for_each(|(vsr1, vsr2, vsr3)| {
                 // dbg!((vsr1, vsr2, vsr3));
                 let should_cull_point = |point: &nalgebra::Vector4<f64>| {
                     point.x < -1.0
@@ -276,7 +276,8 @@ pub fn render_mesh_component<
                 .to_vec();
 
                 if points.iter().all(|point| should_cull_point(point)) {
-                    return Ok(());
+                    // return Ok(());
+                    return;
                 }
 
                 let viewport_matrix =
@@ -334,7 +335,7 @@ pub fn render_mesh_component<
                     _ => None,
                 };
 
-                let mut fill_half_triangle = |segment_a: Segment3D,
+                let fill_half_triangle = |segment_a: Segment3D,
                                             segment_b: Segment3D|
                 -> anyhow::Result<()> {
                     let resolution = ((segment_a.p2.x - segment_a.p1.x)
@@ -351,12 +352,18 @@ pub fn render_mesh_component<
                             let horizontal_segment = Segment3D::new(segment_a_point, segment_b_point);
                             horizontal_segment.get_point_iterator(None)?.for_each(
                                 |viewport_space_position| {
-                                    let x = (viewport_space_position.x.round()) as usize;
-                                    let y = (viewport_space_position.y.round()) as usize;
+                                    let x = viewport_space_position.x.round() as i64;
+                                    let y = viewport_space_position.y.round() as i64;
                                     let dist = -viewport_space_position.z;
-                                    let current_z = z_buffer.get(x, y)[0];
+                                    if x < 0 || x > frame_width as i64 - 1 || y < 0 || y > frame_height as i64 - 1 {
+                                        return;
+                                    }
+                                    
+                                    let mut z_buffer = z_buffer_clone.lock().unwrap();
+                                    let current_z = z_buffer.get(x as usize, y as usize)[0];
                                     if current_z == f64::NEG_INFINITY || current_z > dist {
-                                        z_buffer.set(x, y, [dist]);
+                                        z_buffer.set(x as usize, y as usize, [dist]);
+                                        std::mem::drop(z_buffer);
                                         let barycentric_coords =
                                             get_barycentric_coords_for_point_in_triangle(
                                                 (
@@ -368,15 +375,6 @@ pub fn render_mesh_component<
                                             );
                                         
                                         let (l1, l2, l3) = barycentric_coords;
-                                        let clip_space_position = nalgebra::Vector4::new(
-                                            l1 * vsr1.clip_space_position.x + l2 * vsr2.clip_space_position.x + l3 * vsr3.clip_space_position.x,
-                                            l1 * vsr1.clip_space_position.y + l2 * vsr2.clip_space_position.y + l3 * vsr3.clip_space_position.y,
-                                            l1 * vsr1.clip_space_position.z + l2 * vsr2.clip_space_position.z + l3 * vsr3.clip_space_position.z,
-                                            1.0,
-                                        );
-                                        if should_cull_point(&clip_space_position) {
-                                            return;
-                                        }
                                         let (n1, n2, n3) = (vsr1.normal, vsr2.normal, vsr3.normal);
                                         // TODO: does this need to be normalized here?
                                         let normal_interp = nalgebra::Vector3::new(
@@ -417,16 +415,14 @@ pub fn render_mesh_component<
                                         let fragment_shader_result =
                                             fragment_shader(FragmentShaderArgs {
                                                 viewport_space_position,
-
                                                 t_bt_vectors,
-
                                                 normal_interp,
                                                 texture_coordinate_interp,
                                                 color_interp,
                                                 barycentric_coords,
                                             });
                                         if let Some(color) = fragment_shader_result.color {
-                                            frame_buffer.set(x, y, color);
+                                            frame_buffer_clone.lock().unwrap().set(x as usize, y as usize, color);
                                         }
                                     }
                                 },
@@ -450,31 +446,41 @@ pub fn render_mesh_component<
             let long_side_split_point = long_side_segment.get_point(
                 (viewport_points[1].y - viewport_points[0].y)
                     / (viewport_points[2].y - viewport_points[0].y),
-            )?;
+            ).unwrap();
 
             fill_half_triangle(
                 Segment3D::from((viewport_points[0], viewport_points[1])),
                 Segment3D::from((viewport_points[0], long_side_split_point)),
-            )?;
+            ).unwrap();
             fill_half_triangle(
                 Segment3D::from((viewport_points[2], viewport_points[1])),
                 Segment3D::from((viewport_points[2], long_side_split_point)),
-            )?;
+            ).unwrap();
 
-            Ok(())
-        })
-        .find_map(|result| -> Option<anyhow::Result<()>> {
-            match result {
-                Ok(_) => None,
-                Err(err) => Some(Err(err)),
-            }
+            // Ok(())
         });
-        if let Some(err) = error_option {
-            err.unwrap();
-        }
-    };
+
+    dbg!(before.elapsed());
+
+    model_renderer_state.frame_buffer = Arc::try_unwrap(frame_buffer_clone)
+        .unwrap()
+        .into_inner()
+        .unwrap();
+    model_renderer_state.z_buffer = Arc::try_unwrap(z_buffer_clone)
+        .unwrap()
+        .into_inner()
+        .unwrap();
+    // .find_map(|result| -> Option<anyhow::Result<()>> {
+    //     match result {
+    //         Ok(_) => None,
+    //         Err(err) => Some(Err(err)),
+    //     }
+    // });
+    // if let Some(err) = error_option {
+    //     err.unwrap();
+    // }
+
     // mesh_components.iter().for_each(|mesh_component| run_shaders_on_mesh_component(mesh_component));
-    run_shaders_on_mesh(mesh);
 }
 
 // impl<'a> ModelRenderer {

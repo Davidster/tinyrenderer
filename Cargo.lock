@@ -1983,6 +1983,7 @@ dependencies = [
  "ndarray",
  "obj-rs",
  "pprof",
+ "rayon",
  "show-image",
  "wavefront_obj",
 ]
