@@ -86,27 +86,30 @@ pub fn wait_for_windows_to_close(windows: Vec<WindowProxy>) -> Result<()> {
     Ok(())
 }
 
-pub fn load_rgba_img_from_file(path: &str) -> Result<RgbaImage> {
+pub fn load_rgba_img_from_file<P: AsRef<std::path::Path>>(path: P) -> Result<RgbaImage> {
     let img = image::open(path)?;
     Ok(img.into_rgba8())
 }
 
-pub fn load_gray_img_from_file(path: &str) -> Result<GrayImage> {
+pub fn load_gray_img_from_file<P: AsRef<std::path::Path>>(path: P) -> Result<GrayImage> {
     let img = image::open(path)?;
     Ok(img.into_luma8())
 }
 
-pub fn load_nd_rgba_img_from_file(path: &str) -> Result<NDRgbaImage> {
+pub fn load_nd_rgba_img_from_file<P: AsRef<std::path::Path>>(path: P) -> Result<NDRgbaImage> {
     let img = load_rgba_img_from_file(path)?;
     Ok(image_to_ndarray_rgba(&img))
 }
 
-pub fn load_nd_gray_img_from_file(path: &str) -> Result<NDGrayImage> {
+pub fn load_nd_gray_img_from_file<P: AsRef<std::path::Path>>(path: P) -> Result<NDGrayImage> {
     let img = load_gray_img_from_file(path)?;
     Ok(image_to_ndarray_gray(&img))
 }
 
-pub fn write_nd_rgba_img_to_file(path: &str, img: &NDRgbaImage) -> Result<()> {
+pub fn write_nd_rgba_img_to_file<P: AsRef<std::path::Path>>(
+    path: P,
+    img: &NDRgbaImage,
+) -> Result<()> {
     ndarray_to_image_rgba(img).save_with_format(path, image::ImageFormat::Png)?;
     Ok(())
 }
@@ -225,7 +228,20 @@ pub fn sample_nd_img(img: &NDRgbaImage, x: f64, y: f64) -> [f64; 4] {
     let x2 = x1 + 1.0;
     let y1 = y.floor();
     let y2 = y1 + 1.0;
+    // if x > 253.0 {
+    //     dbg!([[x1, y1], [x2, y1], [x1, y2], [x2, y2],]);
+    //     std::thread::sleep(std::time::Duration::from_millis(500));
+    // }
     let do_interpolation_for_channel = |channel: usize| {
+        // if x > 253.0 {
+        //     dbg!([
+        //         [x1 as usize, y1 as usize, channel],
+        //         [x2 as usize, y1 as usize, channel],
+        //         [x1 as usize, y2 as usize, channel],
+        //         [x2 as usize, y2 as usize, channel],
+        //     ]);
+        //     std::thread::sleep(std::time::Duration::from_millis(500));
+        // }
         let corners = [
             img[[x1 as usize, y1 as usize, channel]],
             img[[x2 as usize, y1 as usize, channel]],
@@ -317,7 +333,7 @@ pub fn get_drawable_z_buffer(z_buffer: &NDGrayImage) -> NDGrayImage {
     drawable_z_buffer
 }
 
-pub fn load_model(path: &str) -> Result<wavefront_obj::obj::Object> {
+pub fn load_model<P: AsRef<std::path::Path>>(path: P) -> Result<wavefront_obj::obj::Object> {
     let mut objects = wavefront_obj::obj::parse(std::fs::read_to_string(path)?)?.objects;
     Ok(objects.remove(0))
 }
@@ -355,10 +371,12 @@ pub enum MyTrianglePointColor {
     Textured(TextureCoords),
 }
 
+#[derive(Clone, Debug)]
 pub struct MyRgbaImage {
     pub nd_img: NDRgbaImage,
 }
 
+#[derive(Clone, Debug)]
 pub struct MyGrayImage {
     pub nd_img: NDGrayImage,
 }

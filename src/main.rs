@@ -9,24 +9,30 @@ use model_renderer::*;
 
 #[show_image::main]
 fn main() {
-    let african_head_model = load_model("./src/african_head/african_head.obj").unwrap();
-    let _african_head_texture = flip_vertically(
-        &load_nd_rgba_img_from_file("./src/african_head/african_head_diffuse.png").unwrap(),
-    );
-    let _african_head_normal_map = flip_vertically(
-        &load_nd_rgba_img_from_file("./src/african_head/african_head_normal.png").unwrap(),
-    );
-    let african_head_texture = MyRgbaImage {
-        nd_img: _african_head_texture,
-    };
-    let african_head_normal_map = MyRgbaImage {
-        nd_img: _african_head_normal_map,
-    };
+    let mut african_head_mesh_component = MeshComponent::from((
+        "./src/african_head/african_head.obj",
+        "./src/african_head/african_head_diffuse.png",
+        "./src/african_head/african_head_nm_tangent.png",
+    ));
+
+    let mut african_head_eye_inner_mesh_component = MeshComponent::from((
+        "./src/african_head/african_head_eye_inner.obj",
+        "./src/african_head/african_head_eye_inner_diffuse.png",
+        "./src/african_head/african_head_eye_inner_nm_tangent.png",
+    ));
+
+    let mut african_head_eye_outer_mesh_component = MeshComponent::from((
+        "./src/african_head/african_head_eye_outer.obj",
+        "./src/african_head/african_head_eye_outer_diffuse.png",
+        "./src/african_head/african_head_eye_outer_nm_tangent.png",
+    ));
+
+    african_head_eye_inner_mesh_component.parent = Some(&african_head_mesh_component);
+    african_head_eye_outer_mesh_component.parent = Some(&african_head_mesh_component);
 
     let frame_width = 750;
     let frame_height = 750;
-    let mut model_renderer_state =
-        ModelRendererState::new(frame_width, frame_height, african_head_model);
+    let mut model_renderer_state = ModelRendererState::new(frame_width, frame_height);
 
     clear_screen(&mut model_renderer_state);
 
@@ -58,13 +64,28 @@ fn main() {
             &nalgebra::Vector3::new(0.0, 1.0, 0.0),
         );
 
-        let rotation_matrix = make_rotation_matrix(0.025 * (time as f64), 0.0, 0.0);
+        african_head_mesh_component
+            .transform
+            .set_rotation(nalgebra::Vector3::new(0.025 * (time as f64), 0.0, 0.0));
+        // let rotation_matrix = make_rotation_matrix(0.025 * (time as f64), 0.0, 0.0);
         // let rotation_matrix = make_rotation_matrix(0.0, 0.0, 0.0);
-        let translation_matrix = make_translation_matrix(nalgebra::Vector3::new(0.0, 0.0, 0.0));
+        african_head_mesh_component
+            .transform
+            .set_position(nalgebra::Vector3::new(0.0025 * (time as f64), 0.0, 0.0));
+
+        let scale = 1.0 + 0.0025 * (time as f64);
+        african_head_mesh_component
+            .transform
+            .set_scale(nalgebra::Vector3::new(scale, scale, scale));
+
+        african_head_eye_inner_mesh_component
+            .transform
+            .set_scale(nalgebra::Vector3::new(scale, scale, scale));
+        // let translation_matrix = make_translation_matrix(nalgebra::Vector3::new(0.0, 0.0, 0.0));
         // let translation_matrix =
         //     make_translation_matrix(camera_direction * (-0.004 * time as f64));
 
-        let model_view_matrix = camera_direction_matrix * translation_matrix * rotation_matrix;
+        // let model_view_matrix = camera_direction_matrix * translation_matrix * rotation_matrix;
         let horizontal_fov = PI / 2.0;
         let perspective_matrix = make_perspective_matrix(
             10.0,
@@ -73,119 +94,152 @@ fn main() {
             horizontal_fov * (frame_height as f64 / frame_width as f64),
         );
 
-        render_model(
-            &mut model_renderer_state,
-            &mut |VertexShaderArgs {
-                      model_position,
-                      model_normal,
-                      texture_coordinate,
-                  }| {
-                let global_position = perspective_matrix * model_view_matrix * model_position;
-                let global_position_x = global_position.x / global_position.w;
-                let global_position_y = global_position.y / global_position.w;
-                let global_position_z = global_position.z / global_position.w;
-                let clip_space_position = nalgebra::Vector4::new(
-                    global_position_x,
-                    global_position_y,
-                    global_position_z,
-                    1.0,
-                );
-                let normal = model_view_matrix
-                    .transpose()
-                    .try_inverse()
-                    .expect("Failed to transform normal")
-                    * model_normal;
+        let mut do_render_mesh_component = |mesh_component: &MeshComponent| {
+            // let model_matrix_1 = mesh_component.local_to_world_matrix();
+            // let rotation = mesh_component.transform.rotation.get();
+            // let model_matrix_2 = make_translation_matrix(mesh_component.transform.position.get())
+            //     * make_rotation_matrix(rotation.x, rotation.y, rotation.z)
+            //     * make_scale_matrix(mesh_component.transform.scale.get());
+            // dbg!(model_matrix_1);
+            // dbg!(model_matrix_2);
+            let model_view_matrix =
+                camera_direction_matrix * mesh_component.local_to_world_matrix();
 
-                VertexShaderResult {
-                    clip_space_position,
-                    normal,
-                    texture_coordinate,
-                    color: Some(WHITE),
-                }
-            },
-            &mut |FragmentShaderArgs {
-                      //   viewport_space_position,
-                      t_bt_vectors,
-                      normal_interp,
-                      texture_coordinate_interp,
-                      color_interp,
-                      //   barycentric_coords,
-                      ..
-                  }| {
-                let normal_vector = match (texture_coordinate_interp, t_bt_vectors) {
-                    (
-                        Some(wavefront_obj::obj::TVertex { u, v, .. }),
-                        Some((t_vector, bt_vector)),
-                    ) => {
-                        let normal_map_width = african_head_normal_map.nd_img.shape()[0];
-                        let normal_map_height = african_head_normal_map.nd_img.shape()[1];
-                        let normal_map_normal_rgb = sample_nd_img(
-                            &african_head_normal_map.nd_img,
-                            u * normal_map_width as f64,
-                            v * normal_map_height as f64,
-                        );
-                        let fix_rgb_range = |normal_coord_in_rgb_range| {
-                            ((normal_coord_in_rgb_range / 255.0) * 2.0) - 1.0
-                        };
-                        let normal_map_normal = nalgebra::Vector3::new(
-                            fix_rgb_range(normal_map_normal_rgb[0]),
-                            fix_rgb_range(normal_map_normal_rgb[1]),
-                            fix_rgb_range(normal_map_normal_rgb[2]),
-                        );
-                        let tbn_mat = nalgebra::Matrix3::new(
-                            t_vector.x,
-                            bt_vector.x,
-                            normal_interp.x,
-                            t_vector.y,
-                            bt_vector.y,
-                            normal_interp.y,
-                            t_vector.z,
-                            bt_vector.z,
-                            normal_interp.z,
-                        );
-                        (tbn_mat * normal_map_normal).normalize()
-                    }
-                    _ => normal_interp,
-                };
-
-                // let albedo_color_option = Some(WHITE);
-                let albedo_color_option =
-                    if let Some(wavefront_obj::obj::TVertex { u, v, .. }) =
-                        texture_coordinate_interp
-                    {
-                        let texture_width = african_head_texture.nd_img.shape()[0];
-                        let texture_height = african_head_texture.nd_img.shape()[1];
-                        Some(sample_nd_img(
-                            &african_head_texture.nd_img,
-                            u * texture_width as f64,
-                            v * texture_height as f64,
-                        ))
-                    } else if let Some(color) = color_interp {
-                        Some(color)
-                    } else {
-                        None
-                    };
-                let color = albedo_color_option.map(|albedo| {
-                    let to_light_vec =
-                        nalgebra::Vector3::new(camera_pos.x, camera_pos.y, camera_pos.z)
-                            .normalize();
-                    let diffuse_proportion = normal_vector.dot(&to_light_vec).max(0.0);
-
-                    let light_intensity = 1.0;
-                    let ambient_light = 1.0;
-                    [
-                        (ambient_light + (diffuse_proportion * light_intensity * albedo[0]))
-                            .min(255.0),
-                        (ambient_light + (diffuse_proportion * light_intensity * albedo[1]))
-                            .min(255.0),
-                        (ambient_light + (diffuse_proportion * light_intensity * albedo[2]))
-                            .min(255.0),
-                        255.0,
-                    ]
+            let inverse_model_view_matrix = model_view_matrix
+                .transpose()
+                .try_inverse()
+                .unwrap_or_else(|| {
+                    println!("Failed to transform normal for: {:?}", model_view_matrix);
+                    nalgebra::Matrix4::identity()
                 });
-                FragmentShaderResult { color }
-            },
-        );
+            render_mesh_component(
+                &mut model_renderer_state,
+                &mesh_component.mesh,
+                &mut |VertexShaderArgs {
+                          local_position,
+                          local_normal,
+                          texture_coordinate,
+                          ..
+                      }| {
+                    let global_position = perspective_matrix * model_view_matrix * local_position;
+                    let global_position_x = global_position.x / global_position.w;
+                    let global_position_y = global_position.y / global_position.w;
+                    let global_position_z = global_position.z / global_position.w;
+                    let clip_space_position = nalgebra::Vector4::new(
+                        global_position_x,
+                        global_position_y,
+                        global_position_z,
+                        1.0,
+                    );
+
+                    let normal = inverse_model_view_matrix * local_normal;
+
+                    VertexShaderResult {
+                        clip_space_position,
+                        normal,
+                        texture_coordinate,
+                        color: Some(WHITE),
+                    }
+                },
+                &mut |FragmentShaderArgs {
+                          //   viewport_space_position,
+                          t_bt_vectors,
+                          normal_interp,
+                          texture_coordinate_interp,
+                          color_interp,
+                          //   barycentric_coords,
+                          ..
+                      }| {
+                    let normal_vector = match (texture_coordinate_interp, t_bt_vectors) {
+                        (
+                            Some(wavefront_obj::obj::TVertex { u, v, .. }),
+                            Some((t_vector, bt_vector)),
+                        ) => {
+                            let normal_map_width = mesh_component.normal_map.nd_img.shape()[0];
+                            let normal_map_height = mesh_component.normal_map.nd_img.shape()[1];
+                            let normal_map_normal_rgb = sample_nd_img(
+                                &mesh_component.normal_map.nd_img,
+                                u * (normal_map_width - 1) as f64,
+                                v * (normal_map_height - 1) as f64,
+                            );
+                            let fix_rgb_range = |normal_coord_in_rgb_range| {
+                                ((normal_coord_in_rgb_range / 255.0) * 2.0) - 1.0
+                            };
+                            let normal_map_normal = nalgebra::Vector3::new(
+                                fix_rgb_range(normal_map_normal_rgb[0]),
+                                fix_rgb_range(normal_map_normal_rgb[1]),
+                                fix_rgb_range(normal_map_normal_rgb[2]),
+                            );
+                            let tbn_mat = nalgebra::Matrix3::new(
+                                t_vector.x,
+                                bt_vector.x,
+                                normal_interp.x,
+                                t_vector.y,
+                                bt_vector.y,
+                                normal_interp.y,
+                                t_vector.z,
+                                bt_vector.z,
+                                normal_interp.z,
+                            );
+                            (tbn_mat * normal_map_normal).normalize()
+                        }
+                        _ => normal_interp,
+                    };
+
+                    // let albedo_color_option = Some(WHITE);
+                    let albedo_color_option =
+                        if let Some(wavefront_obj::obj::TVertex { u, v, .. }) =
+                            texture_coordinate_interp
+                        {
+                            let texture_width = mesh_component.texture.nd_img.shape()[0];
+                            let texture_height = mesh_component.texture.nd_img.shape()[1];
+                            // if u > 0.99 || v > 0.99 {
+                            //     dbg!(
+                            //         u,
+                            //         v,
+                            //         u * (texture_width - 1) as f64,
+                            //         v * (texture_height - 1) as f64,
+                            //         model.texture.nd_img.shape()
+                            //     );
+                            //     std::thread::sleep(std::time::Duration::from_millis(500));
+                            // }
+
+                            Some(sample_nd_img(
+                                &mesh_component.texture.nd_img,
+                                u * (texture_width - 1) as f64,
+                                v * (texture_height - 1) as f64,
+                            ))
+                        } else if let Some(color) = color_interp {
+                            Some(color)
+                        } else {
+                            None
+                        };
+                    let color = albedo_color_option.map(|albedo| {
+                        let to_light_vec =
+                            nalgebra::Vector3::new(camera_pos.x, camera_pos.y, camera_pos.z)
+                                .normalize();
+                        let diffuse_proportion = normal_vector.dot(&to_light_vec).max(0.0);
+
+                        let light_intensity = 1.0;
+                        let ambient_light = 1.0;
+                        [
+                            (ambient_light + (diffuse_proportion * light_intensity * albedo[0]))
+                                .min(255.0),
+                            (ambient_light + (diffuse_proportion * light_intensity * albedo[1]))
+                                .min(255.0),
+                            (ambient_light + (diffuse_proportion * light_intensity * albedo[2]))
+                                .min(255.0),
+                            255.0,
+                        ]
+                    });
+                    FragmentShaderResult { color }
+                },
+            );
+        };
+
+        do_render_mesh_component(&african_head_mesh_component);
+        do_render_mesh_component(&african_head_eye_inner_mesh_component);
+
         window
             .set_image(
                 "img",
