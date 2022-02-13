@@ -21,6 +21,8 @@ pub struct MeshComponent<'a> {
     pub parent: Option<&'a MeshComponent<'a>>,
 }
 
+const USE_PAR_ITER: bool = false;
+
 // #[derive(Clone, Debug)]
 // pub enum TransformMatState {
 //     Dirty,
@@ -46,6 +48,20 @@ impl<'a, P: AsRef<std::path::Path>> From<(P, P, P)> for MeshComponent<'a> {
         let obj = load_model(obj_path).unwrap();
         let texture = flip_vertically(&load_nd_rgba_img_from_file(texture_path).unwrap());
         let normal_map = flip_vertically(&load_nd_rgba_img_from_file(normal_map_path).unwrap());
+        MeshComponent {
+            mesh: obj,
+            transform: Transform::new(),
+            texture: MyRgbaImage { nd_img: texture },
+            normal_map: MyRgbaImage { nd_img: normal_map },
+            parent: None,
+        }
+    }
+}
+
+impl<'a> From<(wavefront_obj::obj::Object, NDRgbaImage, NDRgbaImage)> for MeshComponent<'a> {
+    fn from(
+        (obj, texture, normal_map): (wavefront_obj::obj::Object, NDRgbaImage, NDRgbaImage),
+    ) -> MeshComponent<'a> {
         MeshComponent {
             mesh: obj,
             transform: Transform::new(),
@@ -167,11 +183,17 @@ pub fn draw_line(
     Ok(())
 }
 
+// TODO: this is somehow rly slow??
 pub fn clear_screen(model_renderer_state: &mut ModelRendererState) {
     let frame_buffer = &mut model_renderer_state.frame_buffer;
     let z_buffer = &mut model_renderer_state.z_buffer;
     let frame_width = frame_buffer.nd_img.shape()[0];
     let frame_height = frame_buffer.nd_img.shape()[1];
+    // frame_buffer.nd_img.map(|_| BLACK);
+    // frame_buffer.nd_img = concatenate(Axis(2), &[img.r.view(), img.g.view(), img.b.view()]).unwrap();
+    // frame_buffer.nd_img
+    // frame_buffer.nd_img.fill(BLACK)
+    // z_buffer.nd_img.map(|_| [f64::NEG_INFINITY]);
     // set all to black
     for x in 0..frame_width {
         for y in 0..frame_height {
@@ -199,268 +221,281 @@ pub fn render_mesh_component(
     let frame_buffer_clone = Arc::new(Mutex::new(model_renderer_state.frame_buffer.clone()));
     let z_buffer_clone = Arc::new(Mutex::new(model_renderer_state.z_buffer.clone()));
     let shapes = &mesh.geometry[0].shapes;
+    let run_vertex_shader = |shape: &wavefront_obj::obj::Shape| {
+        match shape.primitive {
+            wavefront_obj::obj::Primitive::Triangle(i1, i2, i3) => {
+                // get triangle vertices and run them through the vertex shader
+                let v1 = mesh.vertices[i1.0];
+                let v2 = mesh.vertices[i2.0];
+                let v3 = mesh.vertices[i3.0];
+                let get_face_normal = || {
+                    let side_1 =
+                        nalgebra::Vector3::new(v2.x - v1.x, v2.y - v1.y, v2.z - v1.z).normalize();
+                    let side_2 =
+                        nalgebra::Vector3::new(v3.x - v2.x, v3.y - v2.y, v3.z - v2.z).normalize();
+                    let face_normal = side_1.cross(&side_2).normalize();
+                    nalgebra::Vector4::new(face_normal.x, face_normal.y, face_normal.z, 0.0)
+                };
+                let get_normal_for_vertex = |(_, _, index_option): wavefront_obj::obj::VTNIndex| {
+                    index_option
+                        .map(|index| mesh.normals[index])
+                        .map(|normal| nalgebra::Vector4::new(normal.x, normal.y, normal.z, 0.0))
+                        .unwrap_or_else(get_face_normal)
+                };
+
+                let n1 = get_normal_for_vertex(i1);
+                let n2 = get_normal_for_vertex(i2);
+                let n3 = get_normal_for_vertex(i3);
+
+                let get_texture_for_vertex =
+                    |(_, index_option, _): wavefront_obj::obj::VTNIndex| {
+                        index_option.map(|index| mesh.tex_vertices[index])
+                    };
+                let uv1_option = get_texture_for_vertex(i1);
+                let uv2_option = get_texture_for_vertex(i2);
+                let uv3_option = get_texture_for_vertex(i3);
+
+                Some((
+                    vertex_shader(VertexShaderArgs::from((v1, n1, uv1_option))),
+                    vertex_shader(VertexShaderArgs::from((v2, n2, uv2_option))),
+                    vertex_shader(VertexShaderArgs::from((v3, n3, uv3_option))),
+                ))
+            }
+            _ => None,
+        }
+    };
+
     let vertex_shader_results: Vec<
         Option<(VertexShaderResult, VertexShaderResult, VertexShaderResult)>,
-    > = shapes
-        // .iter()
-        .par_iter()
-        .map(|shape| {
-            match shape.primitive {
-                wavefront_obj::obj::Primitive::Triangle(i1, i2, i3) => {
-                    // get triangle vertices and run them through the vertex shader
-                    let v1 = mesh.vertices[i1.0];
-                    let v2 = mesh.vertices[i2.0];
-                    let v3 = mesh.vertices[i3.0];
-                    let get_face_normal = || {
-                        let side_1 = nalgebra::Vector3::new(v2.x - v1.x, v2.y - v1.y, v2.z - v1.z)
-                            .normalize();
-                        let side_2 = nalgebra::Vector3::new(v3.x - v2.x, v3.y - v2.y, v3.z - v2.z)
-                            .normalize();
-                        let face_normal = side_1.cross(&side_2).normalize();
-                        nalgebra::Vector4::new(face_normal.x, face_normal.y, face_normal.z, 0.0)
-                    };
-                    let get_normal_for_vertex =
-                        |(_, _, index_option): wavefront_obj::obj::VTNIndex| {
-                            index_option
-                                .map(|index| mesh.normals[index])
-                                .map(|normal| {
-                                    nalgebra::Vector4::new(normal.x, normal.y, normal.z, 0.0)
-                                })
-                                .unwrap_or_else(get_face_normal)
-                        };
+    > = if USE_PAR_ITER {
+        shapes.par_iter().map(run_vertex_shader).collect()
+    } else {
+        shapes.iter().map(run_vertex_shader).collect()
+    };
+    // let before = std::time::Instant::now();
 
-                    let n1 = get_normal_for_vertex(i1);
-                    let n2 = get_normal_for_vertex(i2);
-                    let n3 = get_normal_for_vertex(i3);
+    let run_fragment_shader = |(vsr1, vsr2, vsr3): &(
+        VertexShaderResult,
+        VertexShaderResult,
+        VertexShaderResult,
+    )| {
+        // dbg!((vsr1, vsr2, vsr3));
+        let should_cull_point = |point: &nalgebra::Vector4<f64>| {
+            point.x < -1.0
+                || point.x > 1.0
+                || point.y < -1.0
+                || point.y > 1.0
+                || point.z < -1.0
+                || point.z > 1.0
+        };
 
-                    let get_texture_for_vertex =
-                        |(_, index_option, _): wavefront_obj::obj::VTNIndex| {
-                            index_option.map(|index| mesh.tex_vertices[index])
-                        };
-                    let uv1_option = get_texture_for_vertex(i1);
-                    let uv2_option = get_texture_for_vertex(i2);
-                    let uv3_option = get_texture_for_vertex(i3);
+        let points = [
+            vsr1.clip_space_position,
+            vsr2.clip_space_position,
+            vsr3.clip_space_position,
+        ]
+        .to_vec();
 
-                    Some((
-                        vertex_shader(VertexShaderArgs::from((v1, n1, uv1_option))),
-                        vertex_shader(VertexShaderArgs::from((v2, n2, uv2_option))),
-                        vertex_shader(VertexShaderArgs::from((v3, n3, uv3_option))),
-                    ))
+        if points.iter().all(|point| should_cull_point(point)) {
+            // return Ok(());
+            return;
+        }
+
+        let viewport_matrix = make_scale_matrix(nalgebra::Vector3::new(
+            (frame_width - 1) as f64 / 2.0,
+            (frame_height - 1) as f64 / 2.0,
+            1.0,
+        )) * make_translation_matrix(nalgebra::Vector3::new(1.0, 1.0, 0.0));
+
+        let mut viewport_points: Vec<nalgebra::Vector4<f64>> = points
+            .iter()
+            .map(|point| viewport_matrix * nalgebra::Vector4::new(point.x, point.y, point.z, 1.0))
+            // TODO: is this needed?
+            .map(|point| {
+                nalgebra::Vector4::new(point.x / point.w, point.y / point.w, point.z / point.w, 1.0)
+            })
+            .collect();
+
+        let viewport_points_unsorted = viewport_points.clone();
+
+        viewport_points.sort_by(|a, b| b.y.partial_cmp(&a.y).unwrap_or(std::cmp::Ordering::Equal));
+
+        let t_bt_vectors = match (
+            vsr1.texture_coordinate,
+            vsr2.texture_coordinate,
+            vsr3.texture_coordinate,
+        ) {
+            (Some(uv1), Some(uv2), Some(uv3)) => {
+                let uv_mat = matrix![uv2.u - uv1.u, uv2.v - uv1.v;
+                                    uv3.u - uv1.u, uv3.v - uv1.v;];
+                let triangle_corner_edges = matrix![points[1].x - points[0].x, points[1].y - points[0].y, points[1].z - points[0].z;
+                                                    points[2].x - points[0].x, points[2].y - points[0].y, points[2].z - points[0].z;];
+                match uv_mat.try_inverse() {
+                    Some(uv_mat_inv) => {
+                        let tb_mat = uv_mat_inv * triangle_corner_edges;
+                        let t_vector =
+                            nalgebra::Vector4::new(tb_mat.m11, tb_mat.m12, tb_mat.m13, 0.0)
+                                .normalize();
+                        let bt_vector =
+                            nalgebra::Vector4::new(tb_mat.m21, tb_mat.m22, tb_mat.m23, 0.0)
+                                .normalize();
+                        Some((t_vector, bt_vector))
+                    }
+                    None => None,
                 }
-                _ => None,
             }
-        })
-        .collect();
-    let before = std::time::Instant::now();
-    
-    // let error_option = vertex_shader_results.iter()...
-    vertex_shader_results
-            .par_iter()
-            .flatten()
-            .for_each(|(vsr1, vsr2, vsr3)| {
-                // dbg!((vsr1, vsr2, vsr3));
-                let should_cull_point = |point: &nalgebra::Vector4<f64>| {
-                    point.x < -1.0
-                        || point.x > 1.0
-                        || point.y < -1.0
-                        || point.y > 1.0
-                        || point.z < -1.0
-                        || point.z > 1.0
-                };
+            _ => None,
+        };
 
-                let points = [
-                    vsr1.clip_space_position,
-                    vsr2.clip_space_position,
-                    vsr3.clip_space_position,
-                ]
-                .to_vec();
-
-                if points.iter().all(|point| should_cull_point(point)) {
-                    // return Ok(());
-                    return;
-                }
-
-                let viewport_matrix =
-                    make_scale_matrix(nalgebra::Vector3::new(
-                        (frame_width - 1) as f64 / 2.0,
-                        (frame_height - 1) as f64 / 2.0,
-                        1.0,
-                    )) * make_translation_matrix(nalgebra::Vector3::new(1.0, 1.0, 0.0));
-
-                let mut viewport_points: Vec<nalgebra::Vector4<f64>> = points
-                    .iter()
-                    .map(|point| {
-                        viewport_matrix * nalgebra::Vector4::new(point.x, point.y, point.z, 1.0)
-                    })
-                    // TODO: is this needed?
-                    .map(|point| {
-                        nalgebra::Vector4::new(
-                            point.x / point.w,
-                            point.y / point.w,
-                            point.z / point.w,
-                            1.0,
-                        )
-                    })
-                    .collect();
-                
-                let viewport_points_unsorted = viewport_points.clone();
-
-                viewport_points
-                    .sort_by(|a, b| b.y.partial_cmp(&a.y).unwrap_or(std::cmp::Ordering::Equal));
-
-                let t_bt_vectors = match (
-                    vsr1.texture_coordinate,
-                    vsr2.texture_coordinate,
-                    vsr3.texture_coordinate,
-                ) {
-                    (Some(uv1), Some(uv2), Some(uv3)) => {
-                        let uv_mat = matrix![uv2.u - uv1.u, uv2.v - uv1.v;
-                                            uv3.u - uv1.u, uv3.v - uv1.v;];
-                        let triangle_corner_edges = matrix![points[1].x - points[0].x, points[1].y - points[0].y, points[1].z - points[0].z;
-                                                            points[2].x - points[0].x, points[2].y - points[0].y, points[2].z - points[0].z;];
-                        match uv_mat.try_inverse() {
-                            Some(uv_mat_inv) => {
-                                let tb_mat = uv_mat_inv * triangle_corner_edges;
-                                let t_vector =
-                                    nalgebra::Vector4::new(tb_mat.m11, tb_mat.m12, tb_mat.m13, 0.0)
-                                        .normalize();
-                                let bt_vector =
-                                    nalgebra::Vector4::new(tb_mat.m21, tb_mat.m22, tb_mat.m23, 0.0)
-                                        .normalize();
-                                Some((t_vector, bt_vector))
+        let fill_half_triangle = |segment_a: Segment3D,
+                                  segment_b: Segment3D|
+         -> anyhow::Result<()> {
+            let resolution = ((segment_a.p2.x - segment_a.p1.x)
+                .abs()
+                .max((segment_a.p2.y - segment_a.p1.y).abs())
+                .max((segment_b.p2.x - segment_a.p1.x).abs())
+                .max((segment_b.p2.y - segment_a.p1.y).abs())
+                .ceil() as i64)
+                .max(2);
+            let error_option = segment_a
+                .get_point_iterator(resolution)?
+                .zip(segment_b.get_point_iterator(resolution)?)
+                .map(|(segment_a_point, segment_b_point)| -> anyhow::Result<()> {
+                    let horizontal_segment = Segment3D::new(segment_a_point, segment_b_point);
+                    horizontal_segment.get_point_iterator(None)?.for_each(
+                        |viewport_space_position| {
+                            let x = viewport_space_position.x.round() as i64;
+                            let y = viewport_space_position.y.round() as i64;
+                            let dist = -viewport_space_position.z;
+                            if x < 0
+                                || x > frame_width as i64 - 1
+                                || y < 0
+                                || y > frame_height as i64 - 1
+                            {
+                                return;
                             }
-                            None => None,
-                        }
-                    }
-                    _ => None,
-                };
 
-                let fill_half_triangle = |segment_a: Segment3D,
-                                            segment_b: Segment3D|
-                -> anyhow::Result<()> {
-                    let resolution = ((segment_a.p2.x - segment_a.p1.x)
-                        .abs()
-                        .max((segment_a.p2.y - segment_a.p1.y).abs())
-                        .max((segment_b.p2.x - segment_a.p1.x).abs())
-                        .max((segment_b.p2.y - segment_a.p1.y).abs())
-                        .ceil() as i64)
-                        .max(2);
-                    let error_option = segment_a
-                        .get_point_iterator(resolution)?
-                        .zip(segment_b.get_point_iterator(resolution)?)
-                        .map(|(segment_a_point, segment_b_point)| -> anyhow::Result<()> {
-                            let horizontal_segment = Segment3D::new(segment_a_point, segment_b_point);
-                            horizontal_segment.get_point_iterator(None)?.for_each(
-                                |viewport_space_position| {
-                                    let x = viewport_space_position.x.round() as i64;
-                                    let y = viewport_space_position.y.round() as i64;
-                                    let dist = -viewport_space_position.z;
-                                    if x < 0 || x > frame_width as i64 - 1 || y < 0 || y > frame_height as i64 - 1 {
-                                        return;
-                                    }
-                                    
-                                    let mut z_buffer = z_buffer_clone.lock().unwrap();
-                                    let current_z = z_buffer.get(x as usize, y as usize)[0];
-                                    if current_z == f64::NEG_INFINITY || current_z > dist {
-                                        z_buffer.set(x as usize, y as usize, [dist]);
-                                        std::mem::drop(z_buffer);
-                                        let barycentric_coords =
-                                            get_barycentric_coords_for_point_in_triangle(
-                                                (
-                                                    viewport_points_unsorted[0],
-                                                    viewport_points_unsorted[1],
-                                                    viewport_points_unsorted[2],
-                                                ),
-                                                viewport_space_position,
-                                            );
-                                        
-                                        let (l1, l2, l3) = barycentric_coords;
-                                        let (n1, n2, n3) = (vsr1.normal, vsr2.normal, vsr3.normal);
-                                        // TODO: does this need to be normalized here?
-                                        let normal_interp = nalgebra::Vector3::new(
-                                            l1 * n1[0] + l2 * n2[0] + l3 * n3[0],
-                                            l1 * n1[1] + l2 * n2[1] + l3 * n3[1],
-                                            l1 * n1[2] + l2 * n2[2] + l3 * n3[2],
-                                        )
-                                        .normalize();
+                            let mut z_buffer = z_buffer_clone.lock().unwrap();
+                            let current_z = z_buffer.get(x as usize, y as usize)[0];
+                            if current_z == f64::NEG_INFINITY || current_z > dist {
+                                z_buffer.set(x as usize, y as usize, [dist]);
+                                std::mem::drop(z_buffer);
+                                let barycentric_coords =
+                                    get_barycentric_coords_for_point_in_triangle(
+                                        (
+                                            viewport_points_unsorted[0],
+                                            viewport_points_unsorted[1],
+                                            viewport_points_unsorted[2],
+                                        ),
+                                        viewport_space_position,
+                                    );
 
-                                        let texture_coordinate_interp =
-                                            if let (Some(uv1), Some(uv2), Some(uv3)) = (
-                                                vsr1.texture_coordinate,
-                                                vsr2.texture_coordinate,
-                                                vsr3.texture_coordinate,
-                                            ) {
-                                                Some(wavefront_obj::obj::TVertex {
-                                                    u: l1 * uv1.u + l2 * uv2.u + l3 * uv3.u,
-                                                    v: l1 * uv1.v + l2 * uv2.v + l3 * uv3.v,
-                                                    w: l1 * uv1.w + l2 * uv2.w + l3 * uv3.w,
-                                                })
-                                            } else {
-                                                None
-                                            };
+                                let (l1, l2, l3) = barycentric_coords;
+                                let (n1, n2, n3) = (vsr1.normal, vsr2.normal, vsr3.normal);
+                                // TODO: does this need to be normalized here?
+                                let normal_interp = nalgebra::Vector3::new(
+                                    l1 * n1[0] + l2 * n2[0] + l3 * n3[0],
+                                    l1 * n1[1] + l2 * n2[1] + l3 * n3[1],
+                                    l1 * n1[2] + l2 * n2[2] + l3 * n3[2],
+                                )
+                                .normalize();
 
-                                        let color_interp = if let (Some(c1), Some(c2), Some(c3)) =
-                                            (vsr1.color, vsr2.color, vsr3.color)
-                                        {
-                                            Some([
-                                                l1 * c1[0] + l2 * c2[0] + l3 * c3[0],
-                                                l1 * c1[1] + l2 * c2[1] + l3 * c3[1],
-                                                l1 * c1[2] + l2 * c2[2] + l3 * c3[2],
-                                                l1 * c1[3] + l2 * c2[3] + l3 * c3[3],
-                                            ])
-                                        } else {
-                                            None
-                                        };
+                                let texture_coordinate_interp =
+                                    if let (Some(uv1), Some(uv2), Some(uv3)) = (
+                                        vsr1.texture_coordinate,
+                                        vsr2.texture_coordinate,
+                                        vsr3.texture_coordinate,
+                                    ) {
+                                        Some(wavefront_obj::obj::TVertex {
+                                            u: l1 * uv1.u + l2 * uv2.u + l3 * uv3.u,
+                                            v: l1 * uv1.v + l2 * uv2.v + l3 * uv3.v,
+                                            w: l1 * uv1.w + l2 * uv2.w + l3 * uv3.w,
+                                        })
+                                    } else {
+                                        None
+                                    };
 
-                                        let fragment_shader_result =
-                                            fragment_shader(FragmentShaderArgs {
-                                                viewport_space_position,
-                                                t_bt_vectors,
-                                                normal_interp,
-                                                texture_coordinate_interp,
-                                                color_interp,
-                                                barycentric_coords,
-                                            });
-                                        if let Some(color) = fragment_shader_result.color {
-                                            frame_buffer_clone.lock().unwrap().set(x as usize, y as usize, color);
-                                        }
-                                    }
-                                },
-                            );
-                            Ok(())
-                        })
-                        .find_map(|result| -> Option<anyhow::Result<()>> {
-                            match result {
-                                Ok(_) => None,
-                                Err(err) => Some(Err(err)),
+                                let color_interp = if let (Some(c1), Some(c2), Some(c3)) =
+                                    (vsr1.color, vsr2.color, vsr3.color)
+                                {
+                                    Some([
+                                        l1 * c1[0] + l2 * c2[0] + l3 * c3[0],
+                                        l1 * c1[1] + l2 * c2[1] + l3 * c3[1],
+                                        l1 * c1[2] + l2 * c2[2] + l3 * c3[2],
+                                        l1 * c1[3] + l2 * c2[3] + l3 * c3[3],
+                                    ])
+                                } else {
+                                    None
+                                };
+
+                                let fragment_shader_result = fragment_shader(FragmentShaderArgs {
+                                    viewport_space_position,
+                                    t_bt_vectors,
+                                    normal_interp,
+                                    texture_coordinate_interp,
+                                    color_interp,
+                                    barycentric_coords,
+                                });
+                                if let Some(color) = fragment_shader_result.color {
+                                    frame_buffer_clone
+                                        .lock()
+                                        .unwrap()
+                                        .set(x as usize, y as usize, color);
+                                }
                             }
-                        });
-
-                    if let Some(result) = error_option {
-                        return result;
-                    }
+                        },
+                    );
                     Ok(())
-            };
+                })
+                .find_map(|result| -> Option<anyhow::Result<()>> {
+                    match result {
+                        Ok(_) => None,
+                        Err(err) => Some(Err(err)),
+                    }
+                });
 
-            let long_side_segment = Segment3D::from((viewport_points[0], viewport_points[2]));
-            let long_side_split_point = long_side_segment.get_point(
+            if let Some(result) = error_option {
+                return result;
+            }
+            Ok(())
+        };
+
+        let long_side_segment = Segment3D::from((viewport_points[0], viewport_points[2]));
+        let long_side_split_point = long_side_segment
+            .get_point(
                 (viewport_points[1].y - viewport_points[0].y)
                     / (viewport_points[2].y - viewport_points[0].y),
-            ).unwrap();
+            )
+            .unwrap();
 
-            fill_half_triangle(
-                Segment3D::from((viewport_points[0], viewport_points[1])),
-                Segment3D::from((viewport_points[0], long_side_split_point)),
-            ).unwrap();
-            fill_half_triangle(
-                Segment3D::from((viewport_points[2], viewport_points[1])),
-                Segment3D::from((viewport_points[2], long_side_split_point)),
-            ).unwrap();
+        fill_half_triangle(
+            Segment3D::from((viewport_points[0], viewport_points[1])),
+            Segment3D::from((viewport_points[0], long_side_split_point)),
+        )
+        .unwrap();
+        fill_half_triangle(
+            Segment3D::from((viewport_points[2], viewport_points[1])),
+            Segment3D::from((viewport_points[2], long_side_split_point)),
+        )
+        .unwrap();
 
-            // Ok(())
-        });
+        // Ok(())
+    };
 
-    dbg!(before.elapsed());
+    // let error_option = vertex_shader_results.iter()...
+    if USE_PAR_ITER {
+        vertex_shader_results
+            .par_iter()
+            .flatten()
+            .for_each(run_fragment_shader);
+    } else {
+        vertex_shader_results
+            .iter()
+            .flatten()
+            .for_each(run_fragment_shader);
+    }
+
+    // dbg!(before.elapsed());
 
     model_renderer_state.frame_buffer = Arc::try_unwrap(frame_buffer_clone)
         .unwrap()

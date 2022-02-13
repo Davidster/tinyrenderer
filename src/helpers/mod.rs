@@ -1,6 +1,7 @@
 use std::sync::mpsc::channel;
 use std::thread;
 
+use super::*;
 use anyhow::Result;
 
 use image::DynamicImage;
@@ -222,12 +223,13 @@ pub fn ndarray_to_image_gray(img: &NDGrayImage, conversion_type: ImgConversionTy
 }
 
 // formula taken from: https://en.wikipedia.org/wiki/Bilinear_interpolation
-// TODO: if you give perfect pixels, this returns [NaN, NaN, NaN]
 pub fn sample_nd_img(img: &NDRgbaImage, x: f64, y: f64) -> [f64; 4] {
+    // dbg!(x, y);
     let x1 = x.floor();
-    let x2 = x1 + 1.0;
     let y1 = y.floor();
-    let y2 = y1 + 1.0;
+    let x2 = (x1 as usize + 1).min(img.shape()[0] - 1) as f64;
+    let y2 = (y1 as usize + 1).min(img.shape()[1] - 1) as f64;
+
     // if x > 253.0 {
     //     dbg!([[x1, y1], [x2, y1], [x1, y2], [x2, y2],]);
     //     std::thread::sleep(std::time::Duration::from_millis(500));
@@ -242,17 +244,28 @@ pub fn sample_nd_img(img: &NDRgbaImage, x: f64, y: f64) -> [f64; 4] {
         //     ]);
         //     std::thread::sleep(std::time::Duration::from_millis(500));
         // }
+        // if y2 == y1 && x2 == x1 {
+        //     return img[[x1 as usize, y1 as usize, channel]]
+        // }
+        // if x2 == x1 {
+        //     let corners = [
+        //         img[[x1 as usize, y1 as usize, channel]],
+        //         img[[x1 as usize, y2 as usize, channel]],
+        //     ];
+        //     let alpha = y2 - y1;
+
+        //     return
+        // }
         let corners = [
             img[[x1 as usize, y1 as usize, channel]],
             img[[x2 as usize, y1 as usize, channel]],
             img[[x1 as usize, y2 as usize, channel]],
             img[[x2 as usize, y2 as usize, channel]],
         ];
-        (1.0 / ((x2 - x1) * (y2 - y1)))
-            * (corners[0] * ((x2 - x) * (y2 - y))
-                + corners[1] * ((x - x1) * (y2 - y))
-                + corners[2] * ((x2 - x) * (y - y1))
-                + corners[3] * ((x - x1) * (y - y1)))
+        corners[0] * ((x2 - x) * (y2 - y))
+            + corners[1] * ((x - x1) * (y2 - y))
+            + corners[2] * ((x2 - x) * (y - y1))
+            + corners[3] * ((x - x1) * (y - y1))
     };
     [
         do_interpolation_for_channel(0),
@@ -534,4 +547,66 @@ pub fn make_perspective_matrix(
                       0.0, n/t, 0.0,                           0.0;
                       0.0, 0.0, -1.0*(f+n)/(f-n), (-2.0*f*n)/(f-n);
                       0.0, 0.0, -1.0,                          0.0;]
+}
+
+pub fn get_rando_mesh_component<'a>() -> MeshComponent<'a> {
+    let rando_obj = wavefront_obj::obj::Object {
+        name: String::from(""),
+        vertices: vec![
+            wavefront_obj::obj::Vertex {
+                x: 0.0,
+                y: -0.5,
+                z: 0.0,
+            },
+            wavefront_obj::obj::Vertex {
+                x: 0.5,
+                y: 0.5,
+                z: 0.0,
+            },
+            wavefront_obj::obj::Vertex {
+                x: -0.5,
+                y: 0.5,
+                z: 0.0,
+            },
+        ],
+        tex_vertices: vec![
+            wavefront_obj::obj::TVertex {
+                u: 0.5,
+                v: 0.0,
+                w: 0.0,
+            },
+            wavefront_obj::obj::TVertex {
+                u: 1.0,
+                v: 1.0,
+                w: 0.0,
+            },
+            wavefront_obj::obj::TVertex {
+                u: 0.0,
+                v: 1.0,
+                w: 0.0,
+            },
+        ],
+        normals: Vec::new(),
+        geometry: vec![wavefront_obj::obj::Geometry {
+            material_name: None,
+            shapes: vec![wavefront_obj::obj::Shape {
+                primitive: wavefront_obj::obj::Primitive::Triangle(
+                    (0, Some(0), None),
+                    (1, Some(1), None),
+                    (2, Some(2), None),
+                ),
+                groups: Vec::new(),
+                smoothing_groups: Vec::new(),
+            }],
+        }],
+    };
+    MeshComponent::from((
+        rando_obj,
+        flip_vertically(
+            &load_nd_rgba_img_from_file("./src/african_head/african_head_diffuse.png").unwrap(),
+        ),
+        flip_vertically(
+            &load_nd_rgba_img_from_file("./src/african_head/african_head_nm_tangent.png").unwrap(),
+        ),
+    ))
 }

@@ -27,11 +27,13 @@ fn main() {
         "./src/african_head/african_head_eye_outer_nm_tangent.png",
     ));
 
+    let mut rando_mesh_component = get_rando_mesh_component();
+
     african_head_eye_inner_mesh_component.parent = Some(&african_head_mesh_component);
     african_head_eye_outer_mesh_component.parent = Some(&african_head_mesh_component);
 
-    let frame_width = 750;
-    let frame_height = 750;
+    let frame_width = 1000;
+    let frame_height = 1000;
     let mut model_renderer_state = ModelRendererState::new(frame_width, frame_height);
 
     clear_screen(&mut model_renderer_state);
@@ -53,6 +55,7 @@ fn main() {
         .unwrap();
 
     loop {
+        let before = std::time::Instant::now();
         time += 1;
         if time % 10 == 0 {
             showing_normal_map = !showing_normal_map;
@@ -78,7 +81,7 @@ fn main() {
         //     .transform
         //     .set_position(nalgebra::Vector3::new(0.025 * (time as f64), 0.0, 0.0));
 
-        let scale = 1.0 + 0.0025 * (time as f64);
+        // let scale = 1.0 + 0.0025 * (time as f64);
         // african_head_mesh_component
         //     .transform
         //     .set_scale(nalgebra::Vector3::new(scale, scale, scale));
@@ -176,6 +179,7 @@ fn main() {
                                 Some(wavefront_obj::obj::TVertex { u, v, .. }),
                                 Some((t_vector, bt_vector)),
                             ) => {
+                                // dbg!(u, v, normal_map.nd_img.shape());
                                 let normal_map_width = normal_map.nd_img.shape()[0];
                                 let normal_map_height = normal_map.nd_img.shape()[1];
                                 let normal_map_normal_rgb = sample_nd_img(
@@ -262,10 +266,16 @@ fn main() {
             );
         };
 
+        // do_render_mesh_component(&rando_mesh_component);
         do_render_mesh_component(&african_head_mesh_component);
         do_render_mesh_component(&african_head_eye_inner_mesh_component);
-        do_render_mesh_component(&african_head_eye_outer_mesh_component);
+        // do_render_mesh_component(&african_head_eye_outer_mesh_component);
 
+        dbg!(time);
+        dbg!(before.elapsed());
+        if time == 250 {
+            break;
+        }
         window
             .set_image(
                 "img",
