@@ -2,6 +2,9 @@ use std::sync::mpsc::channel;
 use std::thread;
 
 use super::*;
+
+// use core_simd::*;
+
 use anyhow::Result;
 
 use image::DynamicImage;
@@ -184,12 +187,32 @@ pub fn ndarray_to_image_rgba(img: &NDRgbaImage) -> RgbaImage {
     let mut out = RgbaImage::new(img_shape[0] as u32, img_shape[1] as u32);
     for x in 0..img_shape[0] {
         for y in 0..img_shape[1] {
-            let clamp = |val: f64| val.max(0.).min(255.).round() as u8;
+            let clamp = |val: f64| val as u8;
             let r = clamp(img[[x, y, 0]]);
             let g = clamp(img[[x, y, 1]]);
             let b = clamp(img[[x, y, 2]]);
             let a = clamp(img[[x, y, 3]]);
             out.put_pixel(x as u32, y as u32, Rgba::from([r, g, b, a]));
+        }
+    }
+    out
+}
+
+pub fn ndarray_to_image_rgba_and_flip(img: &NDRgbaImage) -> RgbaImage {
+    let img_shape = img.shape();
+    let mut out = RgbaImage::new(img_shape[0] as u32, img_shape[1] as u32);
+    for x in 0..img_shape[0] {
+        for y in 0..img_shape[1] {
+            let clamp = |val: f64| val as u8;
+            let r = clamp(img[[x, y, 0]]);
+            let g = clamp(img[[x, y, 1]]);
+            let b = clamp(img[[x, y, 2]]);
+            let a = clamp(img[[x, y, 3]]);
+            out.put_pixel(
+                x as u32,
+                ((img_shape[1] - 1) - y) as u32,
+                Rgba::from([r, g, b, a]),
+            );
         }
     }
     out
@@ -230,32 +253,7 @@ pub fn sample_nd_img(img: &NDRgbaImage, x: f64, y: f64) -> [f64; 4] {
     let x2 = (x1 as usize + 1).min(img.shape()[0] - 1) as f64;
     let y2 = (y1 as usize + 1).min(img.shape()[1] - 1) as f64;
 
-    // if x > 253.0 {
-    //     dbg!([[x1, y1], [x2, y1], [x1, y2], [x2, y2],]);
-    //     std::thread::sleep(std::time::Duration::from_millis(500));
-    // }
     let do_interpolation_for_channel = |channel: usize| {
-        // if x > 253.0 {
-        //     dbg!([
-        //         [x1 as usize, y1 as usize, channel],
-        //         [x2 as usize, y1 as usize, channel],
-        //         [x1 as usize, y2 as usize, channel],
-        //         [x2 as usize, y2 as usize, channel],
-        //     ]);
-        //     std::thread::sleep(std::time::Duration::from_millis(500));
-        // }
-        // if y2 == y1 && x2 == x1 {
-        //     return img[[x1 as usize, y1 as usize, channel]]
-        // }
-        // if x2 == x1 {
-        //     let corners = [
-        //         img[[x1 as usize, y1 as usize, channel]],
-        //         img[[x1 as usize, y2 as usize, channel]],
-        //     ];
-        //     let alpha = y2 - y1;
-
-        //     return
-        // }
         let corners = [
             img[[x1 as usize, y1 as usize, channel]],
             img[[x2 as usize, y1 as usize, channel]],

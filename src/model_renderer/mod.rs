@@ -1,7 +1,6 @@
 use super::helpers::*;
 use super::segment_3d::*;
 
-use rayon::prelude::*;
 use std::cell::Cell;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -222,18 +221,20 @@ pub fn clear_screen_2(model_renderer_state: &mut ModelRendererState) {
         .clone_from(&model_renderer_state.clear_z_buffer.nd_img);
 }
 
+// TODO: draw bounding box around the triangle and render in horizontal or vertical lines.
+//       this may help improve cache coherency
 pub fn render_mesh_component(
     model_renderer_state: &mut ModelRendererState,
     mesh: &wavefront_obj::obj::Object,
-    vertex_shader: Box<dyn (Fn(VertexShaderArgs) -> VertexShaderResult) + Send + Sync>,
-    fragment_shader: Box<dyn (Fn(FragmentShaderArgs) -> FragmentShaderResult) + Send + Sync>,
+    vertex_shader: &mut dyn Fn(VertexShaderArgs) -> VertexShaderResult,
+    fragment_shader: &mut dyn Fn(FragmentShaderArgs) -> FragmentShaderResult,
 ) {
     let frame_width = model_renderer_state.frame_buffer.nd_img.shape()[0];
     let frame_height = model_renderer_state.frame_buffer.nd_img.shape()[1];
     // let texture_option = &model_renderer_state.texture;
     // let normal_map_option = &model_renderer_state.normal_map;
-    let frame_buffer_clone = Arc::new(Mutex::new(model_renderer_state.frame_buffer.clone()));
-    let z_buffer_clone = Arc::new(Mutex::new(model_renderer_state.z_buffer.clone()));
+    let frame_buffer = &mut model_renderer_state.frame_buffer;
+    let z_buffer = &mut model_renderer_state.z_buffer;
     let shapes = &mesh.geometry[0].shapes;
     let run_vertex_shader = |shape: &wavefront_obj::obj::Shape| {
         match shape.primitive {
@@ -281,11 +282,7 @@ pub fn render_mesh_component(
 
     let vertex_shader_results: Vec<
         Option<(VertexShaderResult, VertexShaderResult, VertexShaderResult)>,
-    > = if USE_PAR_ITER {
-        shapes.par_iter().map(run_vertex_shader).collect()
-    } else {
-        shapes.iter().map(run_vertex_shader).collect()
-    };
+    > = shapes.iter().map(run_vertex_shader).collect();
     // let before = std::time::Instant::now();
 
     let run_fragment_shader = |(vsr1, vsr2, vsr3): &(
@@ -361,8 +358,8 @@ pub fn render_mesh_component(
             _ => None,
         };
 
-        let fill_half_triangle = |segment_a: Segment3D,
-                                  segment_b: Segment3D|
+        let mut fill_half_triangle = |segment_a: Segment3D,
+                                      segment_b: Segment3D|
          -> anyhow::Result<()> {
             let resolution = ((segment_a.p2.x - segment_a.p1.x)
                 .abs()
@@ -389,58 +386,23 @@ pub fn render_mesh_component(
                                 return;
                             }
 
-                            let mut z_buffer = z_buffer_clone.lock().unwrap();
                             let current_z = z_buffer.get(x as usize, y as usize)[0];
                             if current_z == f64::NEG_INFINITY || current_z > dist {
                                 z_buffer.set(x as usize, y as usize, [dist]);
-                                std::mem::drop(z_buffer);
-                                let barycentric_coords =
-                                    get_barycentric_coords_for_point_in_triangle(
-                                        (
-                                            viewport_points_unsorted[0],
-                                            viewport_points_unsorted[1],
-                                            viewport_points_unsorted[2],
-                                        ),
-                                        viewport_space_position,
-                                    );
+                                let (
+                                    barycentric_coords,
+                                    normal_interp,
+                                    texture_coordinate_interp,
+                                    color_interp,
+                                ) = get_fragment_shader_elements(
+                                    &viewport_points_unsorted,
+                                    viewport_space_position,
+                                    vsr1,
+                                    vsr2,
+                                    vsr3,
+                                );
 
-                                let (l1, l2, l3) = barycentric_coords;
-                                let (n1, n2, n3) = (vsr1.normal, vsr2.normal, vsr3.normal);
-                                // TODO: does this need to be normalized here?
-                                let normal_interp = nalgebra::Vector3::new(
-                                    l1 * n1[0] + l2 * n2[0] + l3 * n3[0],
-                                    l1 * n1[1] + l2 * n2[1] + l3 * n3[1],
-                                    l1 * n1[2] + l2 * n2[2] + l3 * n3[2],
-                                )
-                                .normalize();
-
-                                let texture_coordinate_interp =
-                                    if let (Some(uv1), Some(uv2), Some(uv3)) = (
-                                        vsr1.texture_coordinate,
-                                        vsr2.texture_coordinate,
-                                        vsr3.texture_coordinate,
-                                    ) {
-                                        Some(wavefront_obj::obj::TVertex {
-                                            u: l1 * uv1.u + l2 * uv2.u + l3 * uv3.u,
-                                            v: l1 * uv1.v + l2 * uv2.v + l3 * uv3.v,
-                                            w: l1 * uv1.w + l2 * uv2.w + l3 * uv3.w,
-                                        })
-                                    } else {
-                                        None
-                                    };
-
-                                let color_interp = if let (Some(c1), Some(c2), Some(c3)) =
-                                    (vsr1.color, vsr2.color, vsr3.color)
-                                {
-                                    Some([
-                                        l1 * c1[0] + l2 * c2[0] + l3 * c3[0],
-                                        l1 * c1[1] + l2 * c2[1] + l3 * c3[1],
-                                        l1 * c1[2] + l2 * c2[2] + l3 * c3[2],
-                                        l1 * c1[3] + l2 * c2[3] + l3 * c3[3],
-                                    ])
-                                } else {
-                                    None
-                                };
+                                // let (barycentric_coords, normal_interp, texture_coordinate_interp, color_interp) = get_fragment_shader_elements();
 
                                 let fragment_shader_result = fragment_shader(FragmentShaderArgs {
                                     viewport_space_position,
@@ -451,10 +413,7 @@ pub fn render_mesh_component(
                                     barycentric_coords,
                                 });
                                 if let Some(color) = fragment_shader_result.color {
-                                    frame_buffer_clone
-                                        .lock()
-                                        .unwrap()
-                                        .set(x as usize, y as usize, color);
+                                    frame_buffer.set(x as usize, y as usize, color);
                                 }
                             }
                         },
@@ -497,28 +456,12 @@ pub fn render_mesh_component(
     };
 
     // let error_option = vertex_shader_results.iter()...
-    if USE_PAR_ITER {
-        vertex_shader_results
-            .par_iter()
-            .flatten()
-            .for_each(run_fragment_shader);
-    } else {
-        vertex_shader_results
-            .iter()
-            .flatten()
-            .for_each(run_fragment_shader);
-    }
+    vertex_shader_results
+        .iter()
+        .flatten()
+        .for_each(run_fragment_shader);
 
     // dbg!(before.elapsed());
-
-    model_renderer_state.frame_buffer = Arc::try_unwrap(frame_buffer_clone)
-        .unwrap()
-        .into_inner()
-        .unwrap();
-    model_renderer_state.z_buffer = Arc::try_unwrap(z_buffer_clone)
-        .unwrap()
-        .into_inner()
-        .unwrap();
     // .find_map(|result| -> Option<anyhow::Result<()>> {
     //     match result {
     //         Ok(_) => None,
@@ -530,6 +473,66 @@ pub fn render_mesh_component(
     // }
 
     // mesh_components.iter().for_each(|mesh_component| run_shaders_on_mesh_component(mesh_component));
+}
+
+fn get_fragment_shader_elements(
+    viewport_points_unsorted: &Vec<nalgebra::Vector4<f64>>,
+    viewport_space_position: nalgebra::Vector3<f64>,
+    vsr1: &VertexShaderResult,
+    vsr2: &VertexShaderResult,
+    vsr3: &VertexShaderResult,
+) -> (
+    (f64, f64, f64),
+    nalgebra::Vector3<f64>,
+    Option<wavefront_obj::obj::TVertex>,
+    Option<[f64; 4]>,
+) {
+    let barycentric_coords = get_barycentric_coords_for_point_in_triangle(
+        (
+            viewport_points_unsorted[0],
+            viewport_points_unsorted[1],
+            viewport_points_unsorted[2],
+        ),
+        viewport_space_position,
+    );
+    let (l1, l2, l3) = barycentric_coords;
+    let (n1, n2, n3) = (vsr1.normal, vsr2.normal, vsr3.normal);
+    let normal_interp = nalgebra::Vector3::new(
+        l1 * n1[0] + l2 * n2[0] + l3 * n3[0],
+        l1 * n1[1] + l2 * n2[1] + l3 * n3[1],
+        l1 * n1[2] + l2 * n2[2] + l3 * n3[2],
+    )
+    .normalize();
+    let texture_coordinate_interp = if let (Some(uv1), Some(uv2), Some(uv3)) = (
+        vsr1.texture_coordinate,
+        vsr2.texture_coordinate,
+        vsr3.texture_coordinate,
+    ) {
+        Some(wavefront_obj::obj::TVertex {
+            u: l1 * uv1.u + l2 * uv2.u + l3 * uv3.u,
+            v: l1 * uv1.v + l2 * uv2.v + l3 * uv3.v,
+            w: l1 * uv1.w + l2 * uv2.w + l3 * uv3.w,
+        })
+    } else {
+        None
+    };
+    let color_interp = if let (Some(c1), Some(c2), Some(c3)) = (vsr1.color, vsr2.color, vsr3.color)
+    {
+        Some([
+            l1 * c1[0] + l2 * c2[0] + l3 * c3[0],
+            l1 * c1[1] + l2 * c2[1] + l3 * c3[1],
+            l1 * c1[2] + l2 * c2[2] + l3 * c3[2],
+            l1 * c1[3] + l2 * c2[3] + l3 * c3[3],
+        ])
+    } else {
+        None
+    };
+    (
+        barycentric_coords,
+        normal_interp,
+        texture_coordinate_interp,
+        color_interp,
+    )
 }
 
 // impl<'a> ModelRenderer {

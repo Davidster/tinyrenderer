@@ -13,6 +13,8 @@ pprof =  { version = "0.6.2", features = ["flamegraph"] }
 show-image = { version = "0.10.1", features = ["image"] }
 wavefront_obj = "10.0.0"
 rayon = "1.5.1"
+rand = "0.8.4"
+# core_simd = { git = "https://github.com/rust-lang/portable-simd" }
 
 [profile.release]
 debug = true
