@@ -41,6 +41,8 @@ pub struct Transform {
 pub struct ModelRendererState {
     pub frame_buffer: MyRgbaImage,
     pub z_buffer: MyGrayImage,
+    clear_frame_buffer: MyRgbaImage,
+    clear_z_buffer: MyGrayImage,
 }
 
 impl<'a, P: AsRef<std::path::Path>> From<(P, P, P)> for MeshComponent<'a> {
@@ -156,7 +158,17 @@ impl ModelRendererState {
         let mut z_buffer = MyGrayImage {
             nd_img: ndarray::Array3::zeros((frame_width, frame_height, 1)),
         };
+        for x in 0..frame_width {
+            for y in 0..frame_height {
+                // set all to black
+                frame_buffer.set(x, y, BLACK);
+                // reset z-buffer
+                z_buffer.set(x, y, [f64::NEG_INFINITY]);
+            }
+        }
         ModelRendererState {
+            clear_frame_buffer: frame_buffer.clone(),
+            clear_z_buffer: z_buffer.clone(),
             frame_buffer,
             z_buffer,
         }
@@ -184,28 +196,30 @@ pub fn draw_line(
 }
 
 // TODO: this is somehow rly slow??
-pub fn clear_screen(model_renderer_state: &mut ModelRendererState) {
+pub fn clear_screen_1(model_renderer_state: &mut ModelRendererState) {
     let frame_buffer = &mut model_renderer_state.frame_buffer;
     let z_buffer = &mut model_renderer_state.z_buffer;
     let frame_width = frame_buffer.nd_img.shape()[0];
     let frame_height = frame_buffer.nd_img.shape()[1];
-    // frame_buffer.nd_img.map(|_| BLACK);
-    // frame_buffer.nd_img = concatenate(Axis(2), &[img.r.view(), img.g.view(), img.b.view()]).unwrap();
-    // frame_buffer.nd_img
-    // frame_buffer.nd_img.fill(BLACK)
-    // z_buffer.nd_img.map(|_| [f64::NEG_INFINITY]);
-    // set all to black
     for x in 0..frame_width {
         for y in 0..frame_height {
+            // set all to black
             frame_buffer.set(x, y, BLACK);
-        }
-    }
-    // reset z-buffer
-    for x in 0..frame_width {
-        for y in 0..frame_height {
+            // reset z-buffer
             z_buffer.set(x, y, [f64::NEG_INFINITY]);
         }
     }
+}
+
+pub fn clear_screen_2(model_renderer_state: &mut ModelRendererState) {
+    model_renderer_state
+        .frame_buffer
+        .nd_img
+        .clone_from(&model_renderer_state.clear_frame_buffer.nd_img);
+    model_renderer_state
+        .z_buffer
+        .nd_img
+        .clone_from(&model_renderer_state.clear_z_buffer.nd_img);
 }
 
 pub fn render_mesh_component(

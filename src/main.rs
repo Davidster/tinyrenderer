@@ -36,7 +36,7 @@ fn main() {
     let frame_height = 1000;
     let mut model_renderer_state = ModelRendererState::new(frame_width, frame_height);
 
-    clear_screen(&mut model_renderer_state);
+    clear_screen_1(&mut model_renderer_state);
 
     let window = show_image::create_window(
         "img",
@@ -60,7 +60,7 @@ fn main() {
         if time % 10 == 0 {
             showing_normal_map = !showing_normal_map;
         }
-        clear_screen(&mut model_renderer_state);
+        clear_screen_2(&mut model_renderer_state);
 
         let camera_direction = nalgebra::Vector3::new(0.0, 0.0, 1.0).normalize();
         let camera_direction_scaled = camera_direction * 2.0;
@@ -86,9 +86,9 @@ fn main() {
         //     .transform
         //     .set_scale(nalgebra::Vector3::new(scale, scale, scale));
 
-        // african_head_eye_inner_mesh_component
-        //     .transform
-        //     .set_position(nalgebra::Vector3::new(0.0, 0.0, 0.0001 * (time as f64)));
+        rando_mesh_component
+            .transform
+            .set_position(nalgebra::Vector3::new(0.0, 0.0, 0.01 * (time as f64)));
         // african_head_eye_inner_mesh_component
         //     .transform
         //     .set_scale(nalgebra::Vector3::new(scale, scale, scale));
@@ -266,10 +266,12 @@ fn main() {
             );
         };
 
-        // do_render_mesh_component(&rando_mesh_component);
-        do_render_mesh_component(&african_head_mesh_component);
-        do_render_mesh_component(&african_head_eye_inner_mesh_component);
+        do_render_mesh_component(&rando_mesh_component);
+        // do_render_mesh_component(&african_head_mesh_component);
+        // do_render_mesh_component(&african_head_eye_inner_mesh_component);
         // do_render_mesh_component(&african_head_eye_outer_mesh_component);
+
+        // flip_vertically(&model_renderer_state.frame_buffer.nd_img);
 
         dbg!(time);
         dbg!(before.elapsed());
