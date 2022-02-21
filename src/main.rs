@@ -38,17 +38,17 @@ fn main() {
     african_head_eye_inner_mesh_component.parent = Some(&african_head_mesh_component);
     african_head_eye_inner_mesh_component_2.parent = Some(&african_head_mesh_component_2);
 
-    let frame_width = 2160;
-    let frame_height = 3840;
+    let frame_width = 853;
+    let frame_height = 480;
     let mut model_renderer_state = ModelRendererState::new(frame_width, frame_height);
 
     clear_screen(&mut model_renderer_state);
 
-    // let window = show_image::create_window(
-    //     "img",
-    //     show_image::WindowOptions::new().set_size([frame_width as u32, frame_height as u32]),
-    // )
-    // .expect("Failed to create window");
+    let window = show_image::create_window(
+        "img",
+        show_image::WindowOptions::new().set_size([frame_width as u32, frame_height as u32]),
+    )
+    .expect("Failed to create window");
 
     let mut _triangle_index = 0;
     let mut time = 0;
@@ -89,9 +89,9 @@ fn main() {
         // african_head_mesh_component_2
         //     .transform
         //     .set_position(nalgebra::Vector3::new(0.001 * (time as f64), 0.0, 0.0));
-        // african_head_mesh_component
-        //     .transform
-        //     .set_rotation(nalgebra::Vector3::new(0.025 * (time as f64), 0.0, 0.0));
+        african_head_mesh_component
+            .transform
+            .set_rotation(nalgebra::Vector3::new(0.025 * (time as f64), 0.0, 0.0));
         // african_head_eye_inner_mesh_component
         //     .transform
         //     .set_rotation(nalgebra::Vector3::new(0.025 * (time as f64), 0.0, 0.0));
@@ -294,18 +294,13 @@ fn main() {
         println!();
         print_frame_time("Frametime (nosync)", before.elapsed().as_micros() as f64);
 
-        ndarray_to_image_rgba_and_flip(&model_renderer_state.frame_buffer.nd_img)
-            .save("out.jpg")
-            .unwrap();
-        break;
-
-        // window
-        //     .set_image(
-        //         "img",
-        //         ndarray_to_image_rgba_and_flip(&model_renderer_state.frame_buffer.nd_img),
-        //     )
-        //     .expect("Failed to set image");
-        // print_frame_time("Frametime (v-sync)", before.elapsed().as_micros() as f64);
+        window
+            .set_image(
+                "img",
+                ndarray_to_image_rgba_and_flip(&model_renderer_state.frame_buffer.nd_img),
+            )
+            .expect("Failed to set image");
+        print_frame_time("Frametime (v-sync)", before.elapsed().as_micros() as f64);
 
         // dbg!(time);
         // if time == 250 {
