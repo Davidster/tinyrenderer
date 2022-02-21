@@ -1,5 +1,9 @@
 Following [this tutorial](https://github.com/ssloy/tinyrenderer/wiki/Lesson-0:-getting-started) but using Rust instead of cpp.
 
+Result:
+
+![african_head](https://github.com/Davidster/tinyrenderer/raw/master/out.png)
+
 To benchmark it:
 ```sh
 # install deps
