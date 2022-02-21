@@ -17,8 +17,6 @@ use ndarray::s;
 use ndarray::Array3;
 use ndarray::Axis;
 
-use show_image::WindowProxy;
-
 pub const BLACK: [f64; 4] = [0.0, 0.0, 0.0, 255.0];
 pub const RED: [f64; 4] = [255.0, 0.0, 0.0, 255.0];
 pub const GREEN: [f64; 4] = [0.0, 255.0, 0.0, 255.0];
@@ -40,54 +38,6 @@ pub struct SplitImage {
 pub enum ImgConversionType {
     CLAMP,
     NORMALIZE,
-}
-
-#[allow(dead_code)]
-pub fn show_image(img: DynamicImage, name: &str) -> Result<WindowProxy> {
-    let window = show_image::create_window(name, Default::default())?;
-    window.set_image(name, img)?;
-    Ok(window)
-}
-
-pub fn _show_nd_image(img: &NDRgbaImage, name: &str) -> Result<WindowProxy> {
-    let window = show_image::create_window(name, Default::default())?;
-    window.set_image(name, ndarray_to_image_rgba(img))?;
-    Ok(window)
-}
-
-pub fn _show_rgb_image(img: RgbaImage, name: &str) -> Result<WindowProxy> {
-    show_image(image::DynamicImage::ImageRgba8(img), name)
-}
-
-pub fn _show_gray_image(img: GrayImage, name: &str) -> Result<WindowProxy> {
-    show_image(image::DynamicImage::ImageLuma8(img), name)
-}
-
-pub fn _wait_for_windows_to_close(windows: Vec<WindowProxy>) -> Result<()> {
-    if windows.len() == 0 {
-        return Ok(());
-    }
-    let (tx, rx) = channel();
-    for window in &windows {
-        let _tx = tx.clone();
-        let event_receiver = window.event_channel()?;
-        thread::spawn(move || loop {
-            if let Ok(show_image::event::WindowEvent::KeyboardInput(event)) = event_receiver.recv()
-            {
-                if !event.is_synthetic && event.input.state.is_pressed() {
-                    println!("Key pressed!");
-                    if let Err(err) = _tx.send(()) {
-                        println!(
-                            "wait_for_windows_to_close: failed to send keypress event to channel: {:?}", err
-                        );
-                    }
-                    break;
-                }
-            }
-        });
-    }
-    rx.recv()?;
-    Ok(())
 }
 
 pub fn load_rgba_img_from_file<P: AsRef<std::path::Path>>(path: P) -> Result<RgbaImage> {
