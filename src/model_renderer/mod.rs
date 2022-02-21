@@ -2,8 +2,6 @@ use super::helpers::*;
 use super::segment_3d::*;
 
 use std::cell::Cell;
-use std::sync::Arc;
-use std::sync::Mutex;
 
 use anyhow::Result;
 use nalgebra::matrix;
@@ -19,14 +17,6 @@ pub struct MeshComponent<'a> {
     pub normal_map: MyRgbaImage,
     pub parent: Option<&'a MeshComponent<'a>>,
 }
-
-const USE_PAR_ITER: bool = false;
-
-// #[derive(Clone, Debug)]
-// pub enum TransformMatState {
-//     Dirty,
-//     Clean(Matrix4),
-// }
 
 #[derive(Clone, Debug)]
 pub struct Transform {
@@ -104,22 +94,27 @@ impl Transform {
         }
     }
 
+    #[allow(dead_code)]
     pub fn position(&self) -> Vector3 {
         self.position.get()
     }
 
+    #[allow(dead_code)]
     pub fn rotation(&self) -> Vector3 {
         self.rotation.get()
     }
 
+    #[allow(dead_code)]
     pub fn scale(&self) -> Vector3 {
         self.scale.get()
     }
 
+    #[allow(dead_code)]
     pub fn matrix(&self) -> Matrix4 {
         self.matrix.get()
     }
 
+    #[allow(dead_code)]
     pub fn set_position(&self, new_position: Vector3) {
         self.position.set(new_position);
         let mut matrix = self.matrix.get();
@@ -129,16 +124,19 @@ impl Transform {
         self.matrix.set(matrix);
     }
 
+    #[allow(dead_code)]
     pub fn set_rotation(&self, new_rotation: Vector3) {
         self.rotation.set(new_rotation);
         self.resync_matrix();
     }
 
+    #[allow(dead_code)]
     pub fn set_scale(&self, new_scale: Vector3) {
         self.scale.set(new_scale);
         self.resync_matrix();
     }
 
+    #[allow(dead_code)]
     fn resync_matrix(&self) {
         let rotation = self.rotation.get();
         self.matrix.set(
@@ -174,7 +172,7 @@ impl ModelRendererState {
     }
 }
 
-pub fn draw_line(
+pub fn _draw_line(
     img: &mut MyRgbaImage,
     start_point: Vector3,
     end_point: Vector3,
@@ -194,8 +192,7 @@ pub fn draw_line(
     Ok(())
 }
 
-// TODO: this is somehow rly slow??
-pub fn clear_screen_1(model_renderer_state: &mut ModelRendererState) {
+pub fn _clear_screen_old_and_slow(model_renderer_state: &mut ModelRendererState) {
     let frame_buffer = &mut model_renderer_state.frame_buffer;
     let z_buffer = &mut model_renderer_state.z_buffer;
     let frame_width = frame_buffer.nd_img.shape()[0];
@@ -210,7 +207,7 @@ pub fn clear_screen_1(model_renderer_state: &mut ModelRendererState) {
     }
 }
 
-pub fn clear_screen_2(model_renderer_state: &mut ModelRendererState) {
+pub fn clear_screen(model_renderer_state: &mut ModelRendererState) {
     model_renderer_state
         .frame_buffer
         .nd_img
@@ -223,6 +220,8 @@ pub fn clear_screen_2(model_renderer_state: &mut ModelRendererState) {
 
 // TODO: draw bounding box around the triangle and render in horizontal or vertical lines.
 //       this may help improve cache coherency
+//       ...
+//       After all, I'm  not D
 pub fn render_mesh_component(
     model_renderer_state: &mut ModelRendererState,
     mesh: &wavefront_obj::obj::Object,

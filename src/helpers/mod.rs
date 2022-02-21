@@ -3,8 +3,6 @@ use std::thread;
 
 use super::*;
 
-// use core_simd::*;
-
 use anyhow::Result;
 
 use image::DynamicImage;
@@ -30,6 +28,7 @@ pub const WHITE: [f64; 4] = [255.0, 255.0, 255.0, 255.0];
 pub type NDRgbaImage = Array3<f64>;
 pub type NDGrayImage = Array3<f64>;
 
+#[allow(dead_code)]
 pub struct SplitImage {
     pub r: NDGrayImage,
     pub g: NDGrayImage,
@@ -43,27 +42,28 @@ pub enum ImgConversionType {
     NORMALIZE,
 }
 
+#[allow(dead_code)]
 pub fn show_image(img: DynamicImage, name: &str) -> Result<WindowProxy> {
     let window = show_image::create_window(name, Default::default())?;
     window.set_image(name, img)?;
     Ok(window)
 }
 
-pub fn show_nd_image(img: &NDRgbaImage, name: &str) -> Result<WindowProxy> {
+pub fn _show_nd_image(img: &NDRgbaImage, name: &str) -> Result<WindowProxy> {
     let window = show_image::create_window(name, Default::default())?;
     window.set_image(name, ndarray_to_image_rgba(img))?;
     Ok(window)
 }
 
-pub fn show_rgb_image(img: RgbaImage, name: &str) -> Result<WindowProxy> {
+pub fn _show_rgb_image(img: RgbaImage, name: &str) -> Result<WindowProxy> {
     show_image(image::DynamicImage::ImageRgba8(img), name)
 }
 
-pub fn show_gray_image(img: GrayImage, name: &str) -> Result<WindowProxy> {
+pub fn _show_gray_image(img: GrayImage, name: &str) -> Result<WindowProxy> {
     show_image(image::DynamicImage::ImageLuma8(img), name)
 }
 
-pub fn wait_for_windows_to_close(windows: Vec<WindowProxy>) -> Result<()> {
+pub fn _wait_for_windows_to_close(windows: Vec<WindowProxy>) -> Result<()> {
     if windows.len() == 0 {
         return Ok(());
     }
@@ -95,6 +95,7 @@ pub fn load_rgba_img_from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Rgb
     Ok(img.into_rgba8())
 }
 
+#[allow(dead_code)]
 pub fn load_gray_img_from_file<P: AsRef<std::path::Path>>(path: P) -> Result<GrayImage> {
     let img = image::open(path)?;
     Ok(img.into_luma8())
@@ -105,12 +106,12 @@ pub fn load_nd_rgba_img_from_file<P: AsRef<std::path::Path>>(path: P) -> Result<
     Ok(image_to_ndarray_rgba(&img))
 }
 
-pub fn load_nd_gray_img_from_file<P: AsRef<std::path::Path>>(path: P) -> Result<NDGrayImage> {
+pub fn _load_nd_gray_img_from_file<P: AsRef<std::path::Path>>(path: P) -> Result<NDGrayImage> {
     let img = load_gray_img_from_file(path)?;
     Ok(image_to_ndarray_gray(&img))
 }
 
-pub fn write_nd_rgba_img_to_file<P: AsRef<std::path::Path>>(
+pub fn _write_nd_rgba_img_to_file<P: AsRef<std::path::Path>>(
     path: P,
     img: &NDRgbaImage,
 ) -> Result<()> {
@@ -118,7 +119,7 @@ pub fn write_nd_rgba_img_to_file<P: AsRef<std::path::Path>>(
     Ok(())
 }
 
-pub fn write_nd_gray_img_to_file(
+pub fn _write_nd_gray_img_to_file(
     path: &str,
     img: &NDGrayImage,
     conversion_type: ImgConversionType,
@@ -127,7 +128,7 @@ pub fn write_nd_gray_img_to_file(
     Ok(())
 }
 
-pub fn split_img_channels(img: &NDRgbaImage) -> SplitImage {
+pub fn _split_img_channels(img: &NDRgbaImage) -> SplitImage {
     let r = img.clone().slice_move(s![.., .., 0..1]);
     let g = img.clone().slice_move(s![.., .., 1..2]);
     let b = img.clone().slice_move(s![.., .., 2..3]);
@@ -135,7 +136,7 @@ pub fn split_img_channels(img: &NDRgbaImage) -> SplitImage {
     SplitImage { r, g, b, a }
 }
 
-pub fn merge_img_channels(img: &SplitImage) -> Result<NDRgbaImage> {
+pub fn _merge_img_channels(img: &SplitImage) -> Result<NDRgbaImage> {
     let img = concatenate(
         Axis(2),
         &[img.r.view(), img.g.view(), img.b.view(), img.a.view()],
@@ -143,7 +144,7 @@ pub fn merge_img_channels(img: &SplitImage) -> Result<NDRgbaImage> {
     Ok(img)
 }
 
-pub fn rgba_img_to_grayscale(img: &NDRgbaImage) -> NDGrayImage {
+pub fn _rgba_img_to_grayscale(img: &NDRgbaImage) -> NDGrayImage {
     let img_shape = img.shape();
     let mut out = Array3::zeros((img_shape[0], img_shape[1], 1));
     for x in 0..img_shape[0] {
@@ -171,6 +172,7 @@ pub fn image_to_ndarray_rgba(img: &RgbaImage) -> NDRgbaImage {
     out
 }
 
+#[allow(dead_code)]
 pub fn image_to_ndarray_gray(img: &GrayImage) -> NDGrayImage {
     let mut out = Array3::zeros((img.width() as usize, img.height() as usize, 0));
     for x in 0..img.width() as usize {
@@ -182,6 +184,7 @@ pub fn image_to_ndarray_gray(img: &GrayImage) -> NDGrayImage {
     out
 }
 
+#[allow(dead_code)]
 pub fn ndarray_to_image_rgba(img: &NDRgbaImage) -> RgbaImage {
     let img_shape = img.shape();
     let mut out = RgbaImage::new(img_shape[0] as u32, img_shape[1] as u32);
@@ -218,6 +221,7 @@ pub fn ndarray_to_image_rgba_and_flip(img: &NDRgbaImage) -> RgbaImage {
     out
 }
 
+#[allow(dead_code)]
 pub fn ndarray_to_image_gray(img: &NDGrayImage, conversion_type: ImgConversionType) -> GrayImage {
     let img_shape = img.shape();
     let mut out = GrayImage::new(img_shape[0] as u32, img_shape[1] as u32);
@@ -273,7 +277,7 @@ pub fn sample_nd_img(img: &NDRgbaImage, x: f64, y: f64) -> [f64; 4] {
     ]
 }
 
-pub fn multiply_per_pixel(img1: &NDGrayImage, img2: &NDGrayImage) -> NDGrayImage {
+pub fn _multiply_per_pixel(img1: &NDGrayImage, img2: &NDGrayImage) -> NDGrayImage {
     let img_shape = img1.shape();
     let mut out = Array3::zeros((img_shape[0], img_shape[1], 1));
     for x in 0..img_shape[0] {
@@ -297,7 +301,7 @@ pub fn flip_vertically(img: &Array3<f64>) -> Array3<f64> {
     out
 }
 
-pub fn invert(img: &Array3<f64>) -> Array3<f64> {
+pub fn _invert(img: &Array3<f64>) -> Array3<f64> {
     let img_shape = img.shape();
     let mut out = img.clone();
     for x in 0..img_shape[0] {
@@ -329,6 +333,7 @@ pub fn get_barycentric_coords_for_point_in_triangle(
     (lambda_1, lambda_2, lambda_3)
 }
 
+#[allow(dead_code)]
 pub fn get_drawable_z_buffer(z_buffer: &NDGrayImage) -> NDGrayImage {
     let width = z_buffer.shape()[0];
     let height = z_buffer.shape()[1];
@@ -376,6 +381,7 @@ pub struct MyTrianglePoint {
     pub normal: nalgebra::Vector4<f64>,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub enum MyTrianglePointColor {
     Colored([f64; 4]),
@@ -399,6 +405,8 @@ impl MyRgbaImage {
         self.nd_img[[x, y, 2]] = val[2];
         self.nd_img[[x, y, 3]] = val[3];
     }
+
+    #[allow(dead_code)]
     pub fn get(&self, x: usize, y: usize) -> [f64; 4] {
         [
             self.nd_img[[x, y, 0]],
@@ -535,11 +543,11 @@ pub fn make_perspective_matrix(
     near_plane_distance: f64,
     far_plane_distance: f64,
     vertical_fov: f64,
-    horizontal_fov: f64,
+    aspect_ratio: f64,
 ) -> Matrix4<f64> {
     let n = near_plane_distance;
     let f = far_plane_distance;
-    let r = near_plane_distance * (horizontal_fov / 2.0).tan();
+    let r = near_plane_distance * (vertical_fov / 2.0).tan() * aspect_ratio;
     let t = near_plane_distance * (vertical_fov / 2.0).tan();
     nalgebra::matrix![n/r, 0.0, 0.0,                           0.0;
                       0.0, n/t, 0.0,                           0.0;

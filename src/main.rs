@@ -1,5 +1,3 @@
-// #![feature(portable_simd)]
-
 mod helpers;
 mod model_renderer;
 mod segment_3d;
@@ -8,11 +6,10 @@ use std::f64::consts::PI;
 
 use helpers::*;
 use model_renderer::*;
-use rand::prelude::*;
 
 #[show_image::main]
 fn main() {
-    let mut african_head_mesh_component = MeshComponent::from((
+    let african_head_mesh_component = MeshComponent::from((
         "./src/african_head/african_head.obj",
         "./src/african_head/african_head_diffuse.png",
         "./src/african_head/african_head_nm_tangent.png",
@@ -24,22 +21,28 @@ fn main() {
         "./src/african_head/african_head_eye_inner_nm_tangent.png",
     ));
 
-    let mut african_head_eye_outer_mesh_component = MeshComponent::from((
-        "./src/african_head/african_head_eye_outer.obj",
-        "./src/african_head/african_head_eye_outer_diffuse.png",
-        "./src/african_head/african_head_eye_outer_nm_tangent.png",
+    let african_head_mesh_component_2 = MeshComponent::from((
+        "./src/african_head/african_head.obj",
+        "./src/african_head/african_head_diffuse.png",
+        "./src/african_head/african_head_nm_tangent.png",
     ));
 
-    let mut rando_mesh_component = get_rando_mesh_component();
+    let mut african_head_eye_inner_mesh_component_2 = MeshComponent::from((
+        "./src/african_head/african_head_eye_inner.obj",
+        "./src/african_head/african_head_eye_inner_diffuse.png",
+        "./src/african_head/african_head_eye_inner_nm_tangent.png",
+    ));
+
+    let mut _rando_mesh_component = get_rando_mesh_component();
 
     african_head_eye_inner_mesh_component.parent = Some(&african_head_mesh_component);
-    african_head_eye_outer_mesh_component.parent = Some(&african_head_mesh_component);
+    african_head_eye_inner_mesh_component_2.parent = Some(&african_head_mesh_component_2);
 
-    let frame_width = 1000;
-    let frame_height = 1000;
+    let frame_width = 640;
+    let frame_height = 500;
     let mut model_renderer_state = ModelRendererState::new(frame_width, frame_height);
 
-    clear_screen_2(&mut model_renderer_state);
+    clear_screen(&mut model_renderer_state);
 
     let window = show_image::create_window(
         "img",
@@ -47,10 +50,10 @@ fn main() {
     )
     .expect("Failed to create window");
 
-    let mut triangle_index = 0;
+    let mut _triangle_index = 0;
     let mut time = 0;
     let mut showing_normal_map = false;
-    let colors = [RED, BLUE, GREEN];
+    let _colors = [RED, BLUE, GREEN];
 
     loop {
         let before = std::time::Instant::now();
@@ -58,7 +61,7 @@ fn main() {
         if time % 10 == 0 {
             showing_normal_map = !showing_normal_map;
         }
-        clear_screen_2(&mut model_renderer_state);
+        clear_screen(&mut model_renderer_state);
 
         let camera_direction = nalgebra::Vector3::new(0.0, 0.0, 1.0).normalize();
         let camera_direction_scaled = camera_direction * 2.0;
@@ -70,9 +73,6 @@ fn main() {
             &nalgebra::Vector3::new(0.0, 1.0, 0.0),
         );
 
-        // african_head_mesh_component
-        //     .transform
-        //     .set_rotation(nalgebra::Vector3::new(0.025 * (time as f64), 0.0, 0.0));
         // let rotation_matrix = make_rotation_matrix(0.025 * (time as f64), 0.0, 0.0);
         // let rotation_matrix = make_rotation_matrix(0.0, 0.0, 0.0);
         // african_head_mesh_component
@@ -83,6 +83,19 @@ fn main() {
         // african_head_mesh_component
         //     .transform
         //     .set_scale(nalgebra::Vector3::new(scale, scale, scale));
+
+        african_head_mesh_component
+            .transform
+            .set_position(nalgebra::Vector3::new(-0.001 * (time as f64), 0.0, 0.0));
+        african_head_mesh_component_2
+            .transform
+            .set_position(nalgebra::Vector3::new(0.001 * (time as f64), 0.0, 0.0));
+        // african_head_mesh_component
+        //     .transform
+        //     .set_rotation(nalgebra::Vector3::new(0.025 * (time as f64), 0.0, 0.0));
+        // african_head_eye_inner_mesh_component
+        //     .transform
+        //     .set_rotation(nalgebra::Vector3::new(0.025 * (time as f64), 0.0, 0.0));
 
         // rando_mesh_component
         //     .transform
@@ -100,10 +113,8 @@ fn main() {
             10.0,
             1.0,
             horizontal_fov,
-            horizontal_fov * (frame_height as f64 / frame_width as f64),
+            frame_width as f64 / frame_height as f64,
         );
-
-        let perspective_matrix_clone = perspective_matrix.clone();
 
         let mut do_render_mesh_component = |mesh_component: &MeshComponent| {
             // let model_matrix_1 = mesh_component.local_to_world_matrix();
@@ -140,7 +151,7 @@ fn main() {
                           ..
                       }| {
                     let global_position =
-                        perspective_matrix_clone * model_view_matrix_clone * local_position;
+                        perspective_matrix * model_view_matrix_clone * local_position;
                     let global_position_x = global_position.x / global_position.w;
                     let global_position_y = global_position.y / global_position.w;
                     let global_position_z = global_position.z / global_position.w;
@@ -169,11 +180,12 @@ fn main() {
                           //   barycentric_coords,
                           ..
                       }| {
+                    let use_normal_map = false;
                     let normal_vector = match (texture_coordinate_interp, t_bt_vectors) {
                         (
                             Some(wavefront_obj::obj::TVertex { u, v, .. }),
                             Some((t_vector, bt_vector)),
-                        ) => {
+                        ) if use_normal_map => {
                             // dbg!(u, v, normal_map.nd_img.shape());
                             let normal_map_width = normal_map.nd_img.shape()[0];
                             let normal_map_height = normal_map.nd_img.shape()[1];
@@ -260,6 +272,8 @@ fn main() {
         // do_render_mesh_component(&rando_mesh_component);
         do_render_mesh_component(&african_head_mesh_component);
         do_render_mesh_component(&african_head_eye_inner_mesh_component);
+        do_render_mesh_component(&african_head_mesh_component_2);
+        do_render_mesh_component(&african_head_eye_inner_mesh_component_2);
         // do_render_mesh_component(&african_head_eye_outer_mesh_component);
 
         // flip_vertically(&model_renderer_state.frame_buffer.nd_img);
@@ -273,6 +287,14 @@ fn main() {
         //         .set(x as usize, y as usize, _val);
         // });
 
+        let print_frame_time = |label: &str, frame_time: f64| {
+            let fps = 1_000_000.0 / (frame_time as f64);
+            println!("{:?}: {:.2}ms ({:.2} fps)", label, frame_time / 1000.0, fps);
+        };
+
+        println!();
+        print_frame_time("Frametime (nosync)", before.elapsed().as_micros() as f64);
+
         window
             .set_image(
                 "img",
@@ -281,11 +303,13 @@ fn main() {
             )
             .expect("Failed to set image");
 
-        dbg!(time);
-        dbg!(before.elapsed());
-        if time == 250 {
-            break;
-        }
+        // dbg!(frame_time_duration);
+        print_frame_time("Frametime (v-sync)", before.elapsed().as_micros() as f64);
+
+        // dbg!(time);
+        // if time == 250 {
+        //     break;
+        // }
 
         // window
         //     .set_image(
