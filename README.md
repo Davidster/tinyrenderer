@@ -2,7 +2,7 @@ Following [this tutorial](https://github.com/ssloy/tinyrenderer/wiki/Lesson-0:-g
 
 Result:
 
-![african_head](https://github.com/Davidster/tinyrenderer/raw/master/out.png)
+![african_head](https://github.com/Davidster/tinyrenderer/raw/master/sample.jpg)
 
 To benchmark it:
 ```sh
