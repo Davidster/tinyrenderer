@@ -1,11 +1,12 @@
 mod helpers;
-mod model_renderer;
-mod segment_3d;
+mod mesh_component;
+mod transform;
 
 use std::f64::consts::PI;
 
 use helpers::*;
-use model_renderer::*;
+use mesh_component::*;
+use transform::*;
 
 #[show_image::main]
 fn main() {
@@ -40,9 +41,6 @@ fn main() {
 
     let frame_width = 853;
     let frame_height = 480;
-    let mut model_renderer_state = ModelRendererState::new(frame_width, frame_height);
-
-    clear_screen(&mut model_renderer_state);
 
     let window = show_image::create_window(
         "img",
@@ -57,7 +55,6 @@ fn main() {
     loop {
         let before = std::time::Instant::now();
         time += 1;
-        clear_screen(&mut model_renderer_state);
 
         let camera_direction = nalgebra::Vector3::new(0.0, 0.0, 1.0).normalize();
         let camera_direction_scaled = camera_direction * 2.0;
@@ -140,132 +137,128 @@ fn main() {
             let normal_map = &mesh_component.normal_map;
             let texture = &mesh_component.texture;
 
-            render_mesh_component(
-                &mut model_renderer_state,
-                &mesh_component.mesh,
-                &mut |VertexShaderArgs {
-                          local_position,
-                          local_normal,
-                          texture_coordinate,
-                          ..
-                      }| {
-                    let global_position =
-                        perspective_matrix * model_view_matrix_clone * local_position;
-                    let global_position_x = global_position.x / global_position.w;
-                    let global_position_y = global_position.y / global_position.w;
-                    let global_position_z = global_position.z / global_position.w;
-                    let clip_space_position = nalgebra::Vector4::new(
-                        global_position_x,
-                        global_position_y,
-                        global_position_z,
-                        1.0,
-                    );
+            // let vertex_shader = |VertexShaderArgs {
+            //                          local_position,
+            //                          local_normal,
+            //                          texture_coordinate,
+            //                          ..
+            //                      }| {
+            //     let global_position = perspective_matrix * model_view_matrix_clone * local_position;
+            //     let global_position_x = global_position.x / global_position.w;
+            //     let global_position_y = global_position.y / global_position.w;
+            //     let global_position_z = global_position.z / global_position.w;
+            //     let clip_space_position = nalgebra::Vector4::new(
+            //         global_position_x,
+            //         global_position_y,
+            //         global_position_z,
+            //         1.0,
+            //     );
 
-                    let normal = inverse_model_view_matrix_clone * local_normal;
+            //     let normal = inverse_model_view_matrix_clone * local_normal;
 
-                    VertexShaderResult {
-                        clip_space_position,
-                        normal,
-                        texture_coordinate,
-                        color: Some(WHITE),
-                    }
-                },
-                &mut |FragmentShaderArgs {
-                          //   viewport_space_position,
-                          t_bt_vectors,
-                          normal_interp,
-                          texture_coordinate_interp,
-                          color_interp,
-                          //   barycentric_coords,
-                          ..
-                      }| {
-                    let use_normal_map = true;
-                    let normal_vector = match (texture_coordinate_interp, t_bt_vectors) {
-                        (
-                            Some(wavefront_obj::obj::TVertex { u, v, .. }),
-                            Some((t_vector, bt_vector)),
-                        ) if use_normal_map => {
-                            // dbg!(u, v, normal_map.nd_img.shape());
-                            let normal_map_width = normal_map.nd_img.shape()[0];
-                            let normal_map_height = normal_map.nd_img.shape()[1];
-                            let normal_map_normal_rgb = sample_nd_img(
-                                &normal_map.nd_img,
-                                u * (normal_map_width - 1) as f64,
-                                v * (normal_map_height - 1) as f64,
-                            );
-                            let fix_rgb_range = |normal_coord_in_rgb_range| {
-                                ((normal_coord_in_rgb_range / 255.0) * 2.0) - 1.0
-                            };
-                            let normal_map_normal = nalgebra::Vector3::new(
-                                fix_rgb_range(normal_map_normal_rgb[0]),
-                                fix_rgb_range(normal_map_normal_rgb[1]),
-                                fix_rgb_range(normal_map_normal_rgb[2]),
-                            );
-                            let tbn_mat = nalgebra::Matrix3::new(
-                                t_vector.x,
-                                bt_vector.x,
-                                normal_interp.x,
-                                t_vector.y,
-                                bt_vector.y,
-                                normal_interp.y,
-                                t_vector.z,
-                                bt_vector.z,
-                                normal_interp.z,
-                            );
-                            (tbn_mat * normal_map_normal).normalize()
-                        }
-                        _ => normal_interp,
-                    };
+            //     VertexShaderResult {
+            //         clip_space_position,
+            //         normal,
+            //         texture_coordinate,
+            //         color: Some(WHITE),
+            //     }
+            // };
 
-                    // let albedo_color_option = Some(WHITE);
-                    let albedo_color_option =
-                        if let Some(wavefront_obj::obj::TVertex { u, v, .. }) =
-                            texture_coordinate_interp
-                        {
-                            let texture_width = texture.nd_img.shape()[0];
-                            let texture_height = texture.nd_img.shape()[1];
-                            // if u > 0.99 || v > 0.99 {
-                            //     dbg!(
-                            //         u,
-                            //         v,
-                            //         u * (texture_width - 1) as f64,
-                            //         v * (texture_height - 1) as f64,
-                            //         model.texture.nd_img.shape()
-                            //     );
-                            //     std::thread::sleep(std::time::Duration::from_millis(500));
-                            // }
+            // let fragment_shader = |FragmentShaderArgs {
+            //                            //   viewport_space_position,
+            //                            t_bt_vectors,
+            //                            normal_interp,
+            //                            texture_coordinate_interp,
+            //                            color_interp,
+            //                            //   barycentric_coords,
+            //                            ..
+            //                        }| {
+            //     let use_normal_map = true;
+            //     let normal_vector = match (texture_coordinate_interp, t_bt_vectors) {
+            //         (
+            //             Some(wavefront_obj::obj::TVertex { u, v, .. }),
+            //             Some((t_vector, bt_vector)),
+            //         ) if use_normal_map => {
+            //             // dbg!(u, v, normal_map.nd_img.shape());
+            //             let normal_map_width = normal_map.nd_img.shape()[0];
+            //             let normal_map_height = normal_map.nd_img.shape()[1];
+            //             let normal_map_normal_rgb = sample_nd_img(
+            //                 &normal_map.nd_img,
+            //                 u * (normal_map_width - 1) as f64,
+            //                 v * (normal_map_height - 1) as f64,
+            //             );
+            //             let fix_rgb_range = |normal_coord_in_rgb_range| {
+            //                 ((normal_coord_in_rgb_range / 255.0) * 2.0) - 1.0
+            //             };
+            //             let normal_map_normal = nalgebra::Vector3::new(
+            //                 fix_rgb_range(normal_map_normal_rgb[0]),
+            //                 fix_rgb_range(normal_map_normal_rgb[1]),
+            //                 fix_rgb_range(normal_map_normal_rgb[2]),
+            //             );
+            //             let tbn_mat = nalgebra::Matrix3::new(
+            //                 t_vector.x,
+            //                 bt_vector.x,
+            //                 normal_interp.x,
+            //                 t_vector.y,
+            //                 bt_vector.y,
+            //                 normal_interp.y,
+            //                 t_vector.z,
+            //                 bt_vector.z,
+            //                 normal_interp.z,
+            //             );
+            //             (tbn_mat * normal_map_normal).normalize()
+            //         }
+            //         _ => normal_interp,
+            //     };
 
-                            Some(sample_nd_img(
-                                &texture.nd_img,
-                                u * (texture_width - 1) as f64,
-                                v * (texture_height - 1) as f64,
-                            ))
-                        } else if let Some(color) = color_interp {
-                            Some(color)
-                        } else {
-                            None
-                        };
-                    let color = albedo_color_option.map(|albedo| {
-                        let to_light_vec =
-                            nalgebra::Vector3::new(camera_pos.x, camera_pos.y, camera_pos.z)
-                                .normalize();
-                        let diffuse_proportion = normal_vector.dot(&to_light_vec).max(0.0);
+            //     // let albedo_color_option = Some(WHITE);
+            //     let albedo_color_option =
+            //         if let Some(wavefront_obj::obj::TVertex { u, v, .. }) =
+            //             texture_coordinate_interp
+            //         {
+            //             let texture_width = texture.nd_img.shape()[0];
+            //             let texture_height = texture.nd_img.shape()[1];
+            //             // if u > 0.99 || v > 0.99 {
+            //             //     dbg!(
+            //             //         u,
+            //             //         v,
+            //             //         u * (texture_width - 1) as f64,
+            //             //         v * (texture_height - 1) as f64,
+            //             //         model.texture.nd_img.shape()
+            //             //     );
+            //             //     std::thread::sleep(std::time::Duration::from_millis(500));
+            //             // }
 
-                        let light_intensity = 1.0;
-                        let ambient_light = 1.0;
-                        [
-                            (ambient_light + (diffuse_proportion * light_intensity * albedo[0]))
-                                .min(255.0),
-                            (ambient_light + (diffuse_proportion * light_intensity * albedo[1]))
-                                .min(255.0),
-                            (ambient_light + (diffuse_proportion * light_intensity * albedo[2]))
-                                .min(255.0),
-                            255.0,
-                        ]
-                    });
-                    FragmentShaderResult { color }
-                },
-            );
+            //             Some(sample_nd_img(
+            //                 &texture.nd_img,
+            //                 u * (texture_width - 1) as f64,
+            //                 v * (texture_height - 1) as f64,
+            //             ))
+            //         } else if let Some(color) = color_interp {
+            //             Some(color)
+            //         } else {
+            //             None
+            //         };
+            //     let color = albedo_color_option.map(|albedo| {
+            //         let to_light_vec =
+            //             nalgebra::Vector3::new(camera_pos.x, camera_pos.y, camera_pos.z)
+            //                 .normalize();
+            //         let diffuse_proportion = normal_vector.dot(&to_light_vec).max(0.0);
+
+            //         let light_intensity = 1.0;
+            //         let ambient_light = 1.0;
+            //         [
+            //             (ambient_light + (diffuse_proportion * light_intensity * albedo[0]))
+            //                 .min(255.0),
+            //             (ambient_light + (diffuse_proportion * light_intensity * albedo[1]))
+            //                 .min(255.0),
+            //             (ambient_light + (diffuse_proportion * light_intensity * albedo[2]))
+            //                 .min(255.0),
+            //             255.0,
+            //         ]
+            //     });
+            //     FragmentShaderResult { color }
+            // };
         };
 
         // do_render_mesh_component(&rando_mesh_component);
@@ -294,12 +287,12 @@ fn main() {
         println!();
         print_frame_time("Frametime (nosync)", before.elapsed().as_micros() as f64);
 
-        window
-            .set_image(
-                "img",
-                ndarray_to_image_rgba_and_flip(&model_renderer_state.frame_buffer.nd_img),
-            )
-            .expect("Failed to set image");
+        // window
+        //     .set_image(
+        //         "img",
+        //         ndarray_to_image_rgba_and_flip(&model_renderer_state.frame_buffer.nd_img),
+        //     )
+        //     .expect("Failed to set image");
         print_frame_time("Frametime (v-sync)", before.elapsed().as_micros() as f64);
 
         // dbg!(time);
