@@ -95,50 +95,41 @@ impl State {
             to_srgb(0.8745098039215686),
             to_srgb(0.11764705882352941),
         ];
-        // TODO: make a perfect start of David in a square
-        // let l1 = 1.0 - ((1.0 - 0.5 * 0.5) as f32).sqrt();
-        // let l12 = 0.5 - l1;
-        // let l2 = (l1 / (1.0 - l1)) * 0.5;
-        // let l22 = (0.5 / (1.0 - l1)) * 0.5;
-        // let star_vertices: Vec<Vertex> = vec![
-        //     [-0.5, l12],
-        //     [-0.5, -l12],
-        //     [0.5, -l12],
-        //     [0.5, l12],
-        //     [0.0, 0.5],
-        //     [0.0, -0.5],
-        //     [-l2, l12],
-        //     [l2, l12],
-        //     [l2, -l12],
-        //     [-l2, -l12],
-        //     [-l22, 0.0],
-        //     [l22, 0.0],
-        // ]
-        let star_vertices: Vec<Vertex> = vec![
-            [-0.5, 0.25],
-            [-0.5, -0.25],
-            [0.5, -0.25],
-            [0.5, 0.25],
-            [0.0, 0.5],
-            [0.0, -0.5],
-            [-0.161115, 0.25],
-            [0.161115, 0.25],
-            [0.161115, -0.25],
-            [-0.161115, -0.25],
-            [-0.33333335, 0.0],
-            [0.33333335, 0.0],
-        ]
-        .iter()
-        .map(|pos| Vertex {
-            position: [pos[0], pos[1], 0.0],
-            color: star_color.clone(),
-        })
-        .collect();
+        // make a perfect start of David
+        // 1 / 6*tan(30deg)
+        let t_2_offset = 1.0 / (6.0 * ((std::f32::consts::PI * 2.0 * 30.0) / 360.0));
+        // a^2 + b^2 = c^2 -> b = sqrt(c^2 - a^2) where a is 0.5 and c is 1
+        let t_height = ((1.0 - (0.5 * 0.5)) as f32).sqrt();
+        let half_t_height = t_height / 2.0;
 
-        let star_indices: &[u16] = &[
-            0, 10, 6, 4, 6, 7, 7, 11, 3, 11, 8, 2, 8, 9, 5, 9, 10, 1, 6, 10, 9, 7, 8, 11, 6, 9, 7,
-            7, 9, 8,
+        // triangle pointing upwards
+        let t_1 = vec![
+            [-0.5, -half_t_height],
+            [0.5, -half_t_height],
+            [0.0, half_t_height], // upper tip
         ];
+        // triangle pointing downwards
+        let t_2 = vec![
+            [-0.5, half_t_height],
+            [0.5, half_t_height],
+            [0.0, -half_t_height], // lower tip
+        ];
+
+        let t_2_translated: Vec<[f32; 2]> = t_2
+            .iter()
+            .map(|val| [val[0], val[1] - t_2_offset])
+            .collect();
+        let star_vertices: Vec<Vertex> = t_1
+            .iter()
+            .chain(t_2_translated.iter())
+            .map(|pos| Vertex {
+                // move it up so it's centered at the origin
+                position: [pos[0], pos[1] + (t_2_offset / 2.0), 0.0],
+                color: star_color.clone(),
+            })
+            .collect();
+
+        let star_indices: &[u16] = &[0, 1, 2, 3, 5, 4];
 
         let pentagon_color = [to_srgb(0.5), 0.0, to_srgb(0.5)];
         let pentagon_vertices: Vec<Vertex> = vec![
