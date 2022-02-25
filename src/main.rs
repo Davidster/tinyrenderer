@@ -10,8 +10,20 @@ use transform::*;
 
 use wgpu::util::DeviceExt;
 
-const FRAME_WIDTH: i64 = 1920;
+const FRAME_WIDTH: i64 = 1080;
 const FRAME_HEIGHT: i64 = 1080;
+
+struct ShapeBuffers {
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    num_indices: u32,
+    num_vertices: u32,
+}
+
+enum ChosenShape {
+    PENTAGON,
+    STAR,
+}
 
 struct State {
     surface: wgpu::Surface,
@@ -20,8 +32,9 @@ struct State {
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
     render_pipeline: wgpu::RenderPipeline,
-    num_vertices: u32,
-    vertex_buffer: wgpu::Buffer,
+    pentagon_shape_buffers: ShapeBuffers,
+    star_shape_buffers: ShapeBuffers,
+    chosen_shape: ChosenShape,
     current_mouse_pos: Option<winit::dpi::PhysicalPosition<f64>>,
 }
 
@@ -71,24 +84,101 @@ impl Vertex {
     }
 }
 
-const VERTICES: &[Vertex] = &[
-    Vertex {
-        position: [0.0, 0.5, 0.0],
-        color: [1.0, 0.0, 0.0],
-    },
-    Vertex {
-        position: [-0.5, -0.5, 0.0],
-        color: [0.0, 1.0, 0.0],
-    },
-    Vertex {
-        position: [0.5, -0.5, 0.0],
-        color: [0.0, 0.0, 1.0],
-    },
-];
+fn to_srgb(val: f32) -> f32 {
+    val.powf(2.2)
+}
 
 impl State {
-    // Creating some of the wgpu types requires async code
     async fn new(window: &winit::window::Window) -> Self {
+        let star_color = [
+            to_srgb(0.9686274509803922),
+            to_srgb(0.8745098039215686),
+            to_srgb(0.11764705882352941),
+        ];
+        // TODO: make a perfect start of David in a square
+        // let l1 = 1.0 - ((1.0 - 0.5 * 0.5) as f32).sqrt();
+        // let l12 = 0.5 - l1;
+        // let l2 = (l1 / (1.0 - l1)) * 0.5;
+        // let l22 = (0.5 / (1.0 - l1)) * 0.5;
+        // let star_vertices: Vec<Vertex> = vec![
+        //     [-0.5, l12],
+        //     [-0.5, -l12],
+        //     [0.5, -l12],
+        //     [0.5, l12],
+        //     [0.0, 0.5],
+        //     [0.0, -0.5],
+        //     [-l2, l12],
+        //     [l2, l12],
+        //     [l2, -l12],
+        //     [-l2, -l12],
+        //     [-l22, 0.0],
+        //     [l22, 0.0],
+        // ]
+        let star_vertices: Vec<Vertex> = vec![
+            [-0.5, 0.25],
+            [-0.5, -0.25],
+            [0.5, -0.25],
+            [0.5, 0.25],
+            [0.0, 0.5],
+            [0.0, -0.5],
+            [-0.161115, 0.25],
+            [0.161115, 0.25],
+            [0.161115, -0.25],
+            [-0.161115, -0.25],
+            [-0.33333335, 0.0],
+            [0.33333335, 0.0],
+        ]
+        .iter()
+        .map(|pos| Vertex {
+            position: [pos[0], pos[1], 0.0],
+            color: star_color.clone(),
+        })
+        .collect();
+
+        let star_indices: &[u16] = &[
+            0, 10, 6, 4, 6, 7, 7, 11, 3, 11, 8, 2, 8, 9, 5, 9, 10, 1, 6, 10, 9, 7, 8, 11, 6, 9, 7,
+            7, 9, 8,
+        ];
+
+        let pentagon_color = [to_srgb(0.5), 0.0, to_srgb(0.5)];
+        let pentagon_vertices: Vec<Vertex> = vec![
+            [-0.0868241, 0.49240386],
+            [-0.49513406, 0.06958647],
+            [-0.21918549, -0.44939706],
+            [0.35966998, -0.3473291],
+            [0.44147372, 0.2347359],
+        ]
+        .iter()
+        .map(|pos| Vertex {
+            position: [pos[0], pos[1], 0.0],
+            color: pentagon_color.clone(),
+        })
+        .collect();
+        // let pentagon_vertices: &[Vertex] = &[
+        //     Vertex {
+        //         position: [-0.0868241, 0.49240386, 0.0],
+        //         color: pentagon_color.clone(),
+        //     },
+        //     Vertex {
+        //         position: [-0.49513406, 0.06958647, 0.0],
+        //         color: pentagon_color.clone(),
+        //     },
+        //     Vertex {
+        //         position: [-0.21918549, -0.44939706, 0.0],
+        //         color: pentagon_color.clone(),
+        //     },
+        //     Vertex {
+        //         position: [0.35966998, -0.3473291, 0.0],
+        //         color: pentagon_color.clone(),
+        //     },
+        //     Vertex {
+        //         position: [0.44147372, 0.2347359, 0.0],
+        //         color: pentagon_color.clone(),
+        //     },
+        // ];
+
+        let pentagon_indices: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4];
+
         let backends = wgpu::Backends::all();
         let instance = wgpu::Instance::new(backends);
         let size = window.inner_size();
@@ -132,14 +222,6 @@ impl State {
             label: Some("Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
-
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(VERTICES),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        let num_vertices = VERTICES.len() as u32;
 
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -186,6 +268,36 @@ impl State {
             multiview: None,
         });
 
+        let star_shape_buffers = ShapeBuffers {
+            vertex_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Star Vertex Buffer"),
+                contents: bytemuck::cast_slice(star_vertices.as_slice()),
+                usage: wgpu::BufferUsages::VERTEX,
+            }),
+            index_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Star Index Buffer"),
+                contents: bytemuck::cast_slice(star_indices),
+                usage: wgpu::BufferUsages::INDEX,
+            }),
+            num_vertices: star_vertices.len() as u32,
+            num_indices: star_indices.len() as u32,
+        };
+
+        let pentagon_shape_buffers = ShapeBuffers {
+            vertex_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Pentagon Vertex Buffer"),
+                contents: bytemuck::cast_slice(pentagon_vertices.as_slice()),
+                usage: wgpu::BufferUsages::VERTEX,
+            }),
+            index_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Pentagon Index Buffer"),
+                contents: bytemuck::cast_slice(pentagon_indices),
+                usage: wgpu::BufferUsages::INDEX,
+            }),
+            num_vertices: pentagon_vertices.len() as u32,
+            num_indices: pentagon_indices.len() as u32,
+        };
+
         Self {
             surface,
             device,
@@ -193,8 +305,9 @@ impl State {
             config,
             size,
             render_pipeline,
-            num_vertices,
-            vertex_buffer,
+            star_shape_buffers,
+            pentagon_shape_buffers,
+            chosen_shape: ChosenShape::STAR,
             current_mouse_pos: None,
         }
 
@@ -248,6 +361,13 @@ impl State {
 
     fn update(&mut self) {}
 
+    fn toggle_shape(&mut self) {
+        self.chosen_shape = match &self.chosen_shape {
+            ChosenShape::STAR => ChosenShape::PENTAGON,
+            ChosenShape::PENTAGON => ChosenShape::STAR,
+        }
+    }
+
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         let output = self.surface.get_current_texture()?;
         let view = output
@@ -260,8 +380,8 @@ impl State {
             });
         let clear_color = match self.current_mouse_pos {
             Some(pos) => wgpu::Color {
-                r: pos.x / self.size.width as f64,
-                g: pos.y / self.size.height as f64,
+                r: to_srgb(pos.x as f32 / self.size.width as f32) as f64,
+                g: to_srgb(pos.y as f32 / self.size.height as f32) as f64,
                 b: 1.0,
                 a: 1.0,
             },
@@ -287,8 +407,16 @@ impl State {
             });
 
             render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.draw(0..self.num_vertices, 0..1);
+            let shape_buffers = match &self.chosen_shape {
+                ChosenShape::STAR => &self.star_shape_buffers,
+                ChosenShape::PENTAGON => &self.pentagon_shape_buffers,
+            };
+            render_pass.set_vertex_buffer(0, shape_buffers.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(
+                shape_buffers.index_buffer.slice(..),
+                wgpu::IndexFormat::Uint16,
+            );
+            render_pass.draw_indexed(0..shape_buffers.num_indices, 0, 0..1);
         }
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
@@ -363,6 +491,15 @@ async fn run() {
                                 },
                             ..
                         } => *control_flow = winit::event_loop::ControlFlow::Exit,
+                        winit::event::WindowEvent::KeyboardInput {
+                            input:
+                                winit::event::KeyboardInput {
+                                    state: winit::event::ElementState::Pressed,
+                                    virtual_keycode: Some(winit::event::VirtualKeyCode::Space),
+                                    ..
+                                },
+                            ..
+                        } => state.toggle_shape(),
                         _ => {}
                     }
                 }
