@@ -1,10 +1,13 @@
+mod camera_controller;
 mod helpers;
 mod mesh_component;
 mod texture;
 mod transform;
 
+use camera_controller::*;
 use helpers::*;
 use mesh_component::*;
+use texture::*;
 use transform::*;
 
 use image::GenericImageView;
@@ -12,6 +15,14 @@ use wgpu::util::DeviceExt;
 
 const FRAME_WIDTH: i64 = 1080;
 const FRAME_HEIGHT: i64 = 1080;
+
+#[rustfmt::skip]
+const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
+    1.0, 0.0, 0.0, 0.0,
+    0.0, 1.0, 0.0, 0.0,
+    0.0, 0.0, 0.5, 0.0,
+    0.0, 0.0, 0.5, 1.0,
+);
 
 struct ShapeBuffers {
     vertex_buffer: wgpu::Buffer,
@@ -25,63 +36,36 @@ enum ChosenShape {
     STAR,
 }
 
-struct State {
-    surface: wgpu::Surface,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    config: wgpu::SurfaceConfiguration,
-    size: winit::dpi::PhysicalSize<u32>,
-
-    current_mouse_pos: Option<winit::dpi::PhysicalPosition<f64>>,
-    chosen_shape: ChosenShape,
-
-    star_render_pipeline: wgpu::RenderPipeline,
-    star_shape_buffers: ShapeBuffers,
-    star_diffuse_texture_bind_group: wgpu::BindGroup,
-    star_diffuse_texture: texture::Texture,
-
-    pentagon_render_pipeline: wgpu::RenderPipeline,
-    pentagon_shape_buffers: ShapeBuffers,
-    pentagon_diffuse_texture_bind_group: wgpu::BindGroup,
-    pentagon_diffuse_texture: texture::Texture,
-}
-
 type VertexPosition = [f32; 3];
 type VertexColor = [f32; 3];
 type VertexTextureCoords = [f32; 2];
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct ColoredVertex {
     position: VertexPosition,
     color: VertexColor,
 }
 
-unsafe impl bytemuck::Pod for ColoredVertex {}
-unsafe impl bytemuck::Zeroable for ColoredVertex {}
-
 impl ColoredVertex {
-    const ATTRIBS: [wgpu::VertexAttribute; 2] =
+    const _ATTRIBS: [wgpu::VertexAttribute; 2] =
         wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
 
-    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+    fn _desc<'a>() -> wgpu::VertexBufferLayout<'a> {
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<ColoredVertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &Self::ATTRIBS,
+            attributes: &Self::_ATTRIBS,
         }
     }
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct TexturedVertex {
     position: VertexPosition,
     tex_coords: VertexTextureCoords,
 }
-
-unsafe impl bytemuck::Pod for TexturedVertex {}
-unsafe impl bytemuck::Zeroable for TexturedVertex {}
 
 impl TexturedVertex {
     const ATTRIBS: [wgpu::VertexAttribute; 2] =
@@ -100,13 +84,72 @@ fn to_srgb(val: f32) -> f32 {
     val.powf(2.2)
 }
 
+pub struct Camera {
+    eye: cgmath::Point3<f32>,
+    target: cgmath::Point3<f32>,
+    up: cgmath::Vector3<f32>,
+    aspect: f32,
+    fovy: f32,
+    znear: f32,
+    zfar: f32,
+}
+
+impl Camera {
+    fn build_view_projection_matrix(&self) -> cgmath::Matrix4<f32> {
+        let view = cgmath::Matrix4::look_at_rh(self.eye, self.target, self.up);
+        let proj = cgmath::perspective(cgmath::Deg(self.fovy), self.aspect, self.znear, self.zfar);
+        return OPENGL_TO_WGPU_MATRIX * proj * view;
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct CameraUniform {
+    view_proj: [[f32; 4]; 4],
+}
+
+impl CameraUniform {
+    fn new() -> Self {
+        use cgmath::SquareMatrix;
+        Self {
+            view_proj: cgmath::Matrix4::identity().into(),
+        }
+    }
+
+    fn update_view_proj(&mut self, camera: &Camera) {
+        self.view_proj = camera.build_view_projection_matrix().into();
+    }
+}
+
+struct State {
+    surface: wgpu::Surface,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    config: wgpu::SurfaceConfiguration,
+    size: winit::dpi::PhysicalSize<u32>,
+
+    camera: Camera,
+    camera_controller: CameraController,
+    camera_uniform: CameraUniform,
+    camera_buffer: wgpu::Buffer,
+    camera_bind_group: wgpu::BindGroup,
+
+    current_mouse_pos: Option<winit::dpi::PhysicalPosition<f64>>,
+    chosen_shape: ChosenShape,
+
+    star_render_pipeline: wgpu::RenderPipeline,
+    star_shape_buffers: ShapeBuffers,
+    star_diffuse_texture_bind_group: wgpu::BindGroup,
+    star_diffuse_texture: texture::Texture,
+
+    pentagon_render_pipeline: wgpu::RenderPipeline,
+    pentagon_shape_buffers: ShapeBuffers,
+    pentagon_diffuse_texture_bind_group: wgpu::BindGroup,
+    pentagon_diffuse_texture: texture::Texture,
+}
+
 impl State {
     async fn new(window: &winit::window::Window) -> Self {
-        let star_color = [
-            to_srgb(0.9686274509803922),
-            to_srgb(0.8745098039215686),
-            to_srgb(0.11764705882352941),
-        ];
         // make a perfect start of David
         // 1 / 6*tan(30deg)
         let t_2_offset = 1.0 / (6.0 * ((std::f32::consts::PI * 2.0 * 30.0) / 360.0));
@@ -145,18 +188,8 @@ impl State {
                     (position[0] + 0.5),
                     (position[1] + (star_height / 2.0)) / star_height,
                 ],
-                // tex_coords: pos
-                //     .to_vec()
-                //     .iter()
-                //     .map(|val| (val + 1.0) / 2.0)
-                //     .collect::<Vec<f32>>()
-                //     .as_slice()
-                //     .try_into()
-                //     .unwrap(),
             })
             .collect();
-
-        dbg!(&star_vertices);
 
         let star_indices: &[u16] = &[0, 1, 2, 3, 5, 4];
 
@@ -331,10 +364,55 @@ impl State {
             source: wgpu::ShaderSource::Wgsl(include_str!("texture_shader.wgsl").into()),
         });
 
+        let camera = Camera {
+            eye: (0.0, 1.0, 2.0).into(),
+            target: (0.0, 0.0, 0.0).into(),
+            up: cgmath::Vector3::unit_y(),
+            aspect: config.width as f32 / config.height as f32,
+            fovy: 45.0,
+            znear: 0.1,
+            zfar: 100.0,
+        };
+
+        let camera_controller = CameraController::new(0.2);
+
+        let mut camera_uniform = CameraUniform::new();
+        camera_uniform.update_view_proj(&camera);
+
+        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Camera Buffer"),
+            contents: bytemuck::cast_slice(&[camera_uniform]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let camera_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+                label: Some("camera_bind_group_layout"),
+            });
+
+        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &camera_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }],
+            label: Some("camera_bind_group"),
+        });
+
         let pentagon_render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Pentagon Render Pipeline Layout"),
-                bind_group_layouts: &[&tree_texture_bind_group_layout],
+                bind_group_layouts: &[&tree_texture_bind_group_layout, &camera_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -377,7 +455,7 @@ impl State {
         let star_render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Star Render Pipeline Layout"),
-                bind_group_layouts: &[&star_texture_bind_group_layout],
+                bind_group_layouts: &[&star_texture_bind_group_layout, &camera_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -455,6 +533,12 @@ impl State {
             config,
             size,
 
+            camera,
+            camera_controller,
+            camera_uniform,
+            camera_buffer,
+            camera_bind_group,
+
             current_mouse_pos: None,
             chosen_shape: ChosenShape::PENTAGON,
 
@@ -482,10 +566,19 @@ impl State {
         if let winit::event::WindowEvent::CursorMoved { position, .. } = event {
             self.current_mouse_pos = Some(*position);
         }
+        self.camera_controller.process_events(event);
         false
     }
 
-    fn update(&mut self) {}
+    fn update(&mut self) {
+        self.camera_controller.update_camera(&mut self.camera);
+        self.camera_uniform.update_view_proj(&self.camera);
+        self.queue.write_buffer(
+            &self.camera_buffer,
+            0,
+            bytemuck::cast_slice(&[self.camera_uniform]),
+        );
+    }
 
     fn toggle_shape(&mut self) {
         self.chosen_shape = match &self.chosen_shape {
@@ -532,22 +625,21 @@ impl State {
                 depth_stencil_attachment: None,
             });
 
-            let (shape_buffers, pipeline, bind_group) = match &self.chosen_shape {
+            let (shape_buffers, pipeline, diffuse_texture_bind_group) = match &self.chosen_shape {
                 ChosenShape::STAR => (
                     &self.star_shape_buffers,
                     &self.star_render_pipeline,
-                    Some(&self.star_diffuse_texture_bind_group),
+                    &self.star_diffuse_texture_bind_group,
                 ),
                 ChosenShape::PENTAGON => (
                     &self.pentagon_shape_buffers,
                     &self.pentagon_render_pipeline,
-                    Some(&self.pentagon_diffuse_texture_bind_group),
+                    &self.pentagon_diffuse_texture_bind_group,
                 ),
             };
             render_pass.set_pipeline(pipeline);
-            if let Some(bind_group) = bind_group {
-                render_pass.set_bind_group(0, bind_group, &[]);
-            }
+            render_pass.set_bind_group(0, diffuse_texture_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
             render_pass.set_vertex_buffer(0, shape_buffers.vertex_buffer.slice(..));
             render_pass.set_index_buffer(
                 shape_buffers.index_buffer.slice(..),
@@ -575,11 +667,6 @@ async fn run() {
     let mut state = State::new(&window).await;
 
     event_loop.run(move |event, _, control_flow| {
-        // Have the closure take ownership of the resources.
-        // `event_loop.run` never returns, therefore we must do this to ensure
-        // the resources are properly cleaned up.
-        // let _ = (&instance, &adapter, &shader, &pipeline_layout);
-
         *control_flow = winit::event_loop::ControlFlow::Wait;
         match event {
             winit::event::Event::RedrawRequested(_) => {
